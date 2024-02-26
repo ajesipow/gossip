@@ -1,15 +1,16 @@
 use anyhow::anyhow;
 use anyhow::Result;
-use tracing::debug;
 
 use crate::protocol::Body;
 use crate::protocol::EchoOkBody;
+use crate::protocol::InitOkBody;
 use crate::protocol::Message;
+use crate::transport::StdInTransport;
 use crate::transport::Transport;
 
 /// A node representing a server
 #[derive(Debug)]
-pub(crate) struct Node<T> {
+pub(crate) struct Node<T = StdInTransport> {
     id: String,
     // Counter for message ids, monotonically increasing
     msg_counter: usize,
@@ -30,6 +31,17 @@ impl<T: Transport> Node<T> {
         let Body::Init(init_body) = init_msg.body else {
             panic!("expected init message, got: {:?}", init_msg.body)
         };
+
+        transport
+            .send_message(Message {
+                src: init_msg.dest,
+                dest: init_msg.src,
+                body: Body::InitOk(InitOkBody {
+                    in_reply_to: init_body.msg_id,
+                }),
+            })
+            .expect("be able to send init ok response");
+
         Self {
             id: init_body.node_id,
             msg_counter: 0,
@@ -41,10 +53,7 @@ impl<T: Transport> Node<T> {
         loop {
             let msg = self.transport.read_message()?;
             let response = handle_message(msg, self.id.clone(), self.msg_counter)?;
-            let serialized_response = serde_json::to_string(&response)?;
-            debug!("Sending message: {serialized_response:?}");
-            println!("{serialized_response}");
-            debug!("Message sent");
+            self.transport.send_message(response)?;
         }
     }
 }

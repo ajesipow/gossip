@@ -10,6 +10,12 @@ use crate::protocol::Message;
 pub(crate) trait Transport {
     /// Reads a message from transport.
     fn read_message(&mut self) -> Result<Message>;
+
+    /// Sends a message via transport.
+    fn send_message(
+        &mut self,
+        msg: Message,
+    ) -> Result<()>;
 }
 
 /// An implementation for `Transport` to read from stdin.
@@ -32,5 +38,16 @@ impl Transport for StdInTransport {
         info!("Message received from {:?}", msg.src);
         self.buf.clear();
         Ok(msg)
+    }
+
+    fn send_message(
+        &mut self,
+        msg: Message,
+    ) -> Result<()> {
+        let serialized_response = serde_json::to_string(&msg)?;
+        debug!("Sending message");
+        // We just send to stdout
+        println!("{serialized_response}");
+        Ok(())
     }
 }
