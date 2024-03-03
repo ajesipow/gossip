@@ -34,9 +34,9 @@ jobs:
       run: tar xvf maelstrom.tar.bz2
     - name: Cargo build
       run: cargo build
-    - name: Maelstrom Echo
+    - name: Test Echo
       run: ./maelstrom/maelstrom test -w echo --bin ./target/debug/gossip --node-count 1 --time-limit 5
-    - name: Maelstrom Broadcast 3a
+    - name: Test Broadcast 3a
       run: ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 1 --time-limit 20 --rate 10
-    - name: Maelstrom Broadcast 3b
+    - name: Test Broadcast 3b
       run: ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 5 --time-limit 20 --rate 10
