@@ -1,0 +1,33 @@
+name: General checks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: taiki-e/install-action@just
+    - uses: actions/checkout@v4
+
+    - name: Just CI
+      run: just c
+  test-echo:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: taiki-e/install-action@just
+    - uses: actions/checkout@v4
+    - name: Install openjdk
+      run: apt install openjdk-17-jdk
+    - name: Install graphviz
+      run: apt install graphviz
+    - name: Install gnuplot
+      run: apt install gnuplot
+    - name: Download maelstrom
+      run: curl -O https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
+    - name: Show
+      run: ls
