@@ -14,7 +14,7 @@ pub(crate) trait Transport {
     /// Sends a message via transport.
     fn send_message(
         &mut self,
-        msg: Message,
+        msg: &Message,
     ) -> Result<()>;
 }
 
@@ -32,19 +32,19 @@ impl StdInTransport {
 
 impl Transport for StdInTransport {
     fn read_message(&mut self) -> Result<Message> {
+        self.buf.clear();
         stdin().read_line(&mut self.buf)?;
         debug!("Received message. Raw input: {:?}", &self.buf);
         let msg: Message = serde_json::from_str(&self.buf)?;
         info!("Message received from {:?}", msg.src);
-        self.buf.clear();
         Ok(msg)
     }
 
     fn send_message(
         &mut self,
-        msg: Message,
+        msg: &Message,
     ) -> Result<()> {
-        let serialized_response = serde_json::to_string(&msg)?;
+        let serialized_response = serde_json::to_string(msg)?;
         debug!("Sending message");
         // We just send to stdout
         println!("{serialized_response}");
