@@ -16,6 +16,20 @@ pub(crate) enum Body {
     EchoOk(EchoOkBody),
     Init(InitBody),
     InitOk(InitOkBody),
+    Broadcast(BroadcastBody),
+    BroadcastOk(BroadcastOkBody),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct BroadcastBody {
+    pub message: usize,
+    pub msg_id: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct BroadcastOkBody {
+    pub msg_id: usize,
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
