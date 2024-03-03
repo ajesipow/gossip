@@ -29,4 +29,4 @@ jobs:
     - name: Download maelstrom
       run: curl -O https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
     - name: Show
-      run: ls
+      run: ls -lisa
