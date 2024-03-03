@@ -15,7 +15,7 @@ jobs:
 
     - name: Just CI
       run: just c
-  test-echo:
+  maelstrom-tests:
     runs-on: ubuntu-latest
 
     steps:
