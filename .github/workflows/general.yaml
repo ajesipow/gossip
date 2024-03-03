@@ -24,6 +24,10 @@ jobs:
       with:
         distribution: 'temurin' # See 'Supported distributions' for available options
         java-version: '21'
+    - name: Graphviz
+      run: sudo apt install graphviz
+    - name: Gnuplot
+      run: sudo apt install gnuplot
     - name: Download maelstrom
       run: curl -OL https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
     - name: Untar
