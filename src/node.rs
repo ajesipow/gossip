@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use anyhow::anyhow;
@@ -9,6 +10,7 @@ use crate::protocol::EchoOkBody;
 use crate::protocol::InitOkBody;
 use crate::protocol::Message;
 use crate::protocol::ReadOkBody;
+use crate::protocol::TopologyOkBody;
 use crate::transport::StdInTransport;
 use crate::transport::Transport;
 
@@ -20,6 +22,7 @@ pub(crate) struct Node<T = StdInTransport> {
     msg_counter: usize,
     transport: T,
     broadcast_messages: HashSet<usize>,
+    topology: HashMap<String, Vec<String>>,
 }
 
 impl<T: Transport> Node<T> {
@@ -52,6 +55,7 @@ impl<T: Transport> Node<T> {
             msg_counter: 0,
             transport,
             broadcast_messages: HashSet::new(),
+            topology: HashMap::new(),
         }
     }
 
@@ -105,6 +109,12 @@ impl<T: Transport> Node<T> {
                 messages: self.broadcast_messages.iter().copied().collect(),
                 in_reply_to: read.msg_id,
             })),
+            Body::Topology(body) => {
+                self.topology = body.topology;
+                Ok(Body::TopologyOk(TopologyOkBody {
+                    in_reply_to: body.msg_id,
+                }))
+            }
             t => Err(anyhow!("cannot handle message of type {t:?}")),
         }
     }

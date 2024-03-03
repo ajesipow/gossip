@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -20,6 +22,19 @@ pub(crate) enum Body {
     BroadcastOk(BroadcastOkBody),
     Read(ReadBody),
     ReadOk(ReadOkBody),
+    Topology(TopologyBody),
+    TopologyOk(TopologyOkBody),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct TopologyBody {
+    pub msg_id: usize,
+    pub topology: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct TopologyOkBody {
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
