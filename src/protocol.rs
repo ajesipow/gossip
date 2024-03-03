@@ -18,6 +18,19 @@ pub(crate) enum Body {
     InitOk(InitOkBody),
     Broadcast(BroadcastBody),
     BroadcastOk(BroadcastOkBody),
+    Read(ReadBody),
+    ReadOk(ReadOkBody),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ReadBody {
+    pub msg_id: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ReadOkBody {
+    pub messages: Vec<usize>,
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

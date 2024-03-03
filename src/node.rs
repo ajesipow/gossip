@@ -8,6 +8,7 @@ use crate::protocol::BroadcastOkBody;
 use crate::protocol::EchoOkBody;
 use crate::protocol::InitOkBody;
 use crate::protocol::Message;
+use crate::protocol::ReadOkBody;
 use crate::transport::StdInTransport;
 use crate::transport::Transport;
 
@@ -82,6 +83,7 @@ impl<T: Transport> Node<T> {
         self.transport.send_message(&msg)
     }
 
+    /// Handle incoming messages and return an appropriate response.
     fn handle_message(
         &mut self,
         msg_body: Body,
@@ -99,6 +101,10 @@ impl<T: Transport> Node<T> {
                     in_reply_to: broadcast.msg_id,
                 }))
             }
+            Body::Read(read) => Ok(Body::ReadOk(ReadOkBody {
+                messages: self.broadcast_messages.iter().copied().collect(),
+                in_reply_to: read.msg_id,
+            })),
             t => Err(anyhow!("cannot handle message of type {t:?}")),
         }
     }
