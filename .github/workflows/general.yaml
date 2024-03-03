@@ -22,11 +22,11 @@ jobs:
     - uses: taiki-e/install-action@just
     - uses: actions/checkout@v4
     - name: Install openjdk
-      run: sudo apt install openjdk-17-jdk
+      run: sudo apt install openjdk-17-jdk --fix-missing
     - name: Install graphviz
-      run: sudo apt install graphviz
+      run: sudo apt install graphviz --fix-missing
     - name: Install gnuplot
-      run: sudo apt install gnuplot
+      run: sudo apt install gnuplot --fix-missing
     - name: Download maelstrom
       run: curl -O https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
     - name: Show
