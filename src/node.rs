@@ -5,6 +5,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 
 use crate::protocol::Body;
+use crate::protocol::BroadcastBody;
 use crate::protocol::BroadcastOkBody;
 use crate::protocol::EchoOkBody;
 use crate::protocol::InitOkBody;
@@ -22,7 +23,8 @@ pub(crate) struct Node<T = StdInTransport> {
     msg_counter: usize,
     transport: T,
     broadcast_messages: HashSet<usize>,
-    topology: HashMap<String, Vec<String>>,
+    // The broadcast messages we sent to or receveived from our neighbours
+    neighbour_broadcast_messages: HashMap<String, HashSet<usize>>,
 }
 
 impl<T: Transport> Node<T> {
@@ -55,7 +57,7 @@ impl<T: Transport> Node<T> {
             msg_counter: 0,
             transport,
             broadcast_messages: HashSet::new(),
-            topology: HashMap::new(),
+            neighbour_broadcast_messages: HashMap::new(),
         }
     }
 
@@ -68,8 +70,10 @@ impl<T: Transport> Node<T> {
     pub fn run(&mut self) -> Result<()> {
         loop {
             let msg = self.transport.read_message()?;
-            let response = self.handle_message(msg.body)?;
-            self.send(msg.src, response)?;
+            let response = self.handle_message(&msg.src, msg.body)?;
+            if let Some(response_body) = response {
+                self.send(msg.src, response_body)?;
+            }
         }
     }
 
@@ -90,32 +94,69 @@ impl<T: Transport> Node<T> {
     /// Handle incoming messages and return an appropriate response.
     fn handle_message(
         &mut self,
+        src: &str,
         msg_body: Body,
-    ) -> Result<Body> {
+    ) -> Result<Option<Body>> {
         match msg_body {
-            Body::Echo(echo_body) => Ok(Body::EchoOk(EchoOkBody {
-                msg_id: self.msg_counter,
+            Body::Echo(echo_body) => Ok(Some(Body::EchoOk(EchoOkBody {
+                msg_id: self.message_counter(),
                 in_reply_to: Some(echo_body.msg_id),
                 echo: echo_body.echo,
-            })),
+            }))),
+            Body::BroadcastOk(_) => Ok(None),
             Body::Broadcast(broadcast) => {
-                self.broadcast_messages.insert(broadcast.message);
-                Ok(Body::BroadcastOk(BroadcastOkBody {
-                    msg_id: self.msg_counter,
+                let message = broadcast.message;
+                self.broadcast_messages.insert(message);
+                let receivers: Vec<String> = self
+                    .neighbour_broadcast_messages
+                    .iter()
+                    .filter_map(|(neighbour, messages)| {
+                        if src != neighbour && !messages.contains(&message) {
+                            Some(neighbour.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                // Send message to neighbours if they have not already seen the same ID
+                for dest in receivers {
+                    // No need to send the same message back
+                    let msg_id = self.message_counter();
+                    self.send(dest, Body::Broadcast(BroadcastBody { message, msg_id }))?;
+                }
+                // The neighbour now has seen the message either because we
+                // received it from them or we sent it to them.
+                for (_, messages) in self.neighbour_broadcast_messages.iter_mut() {
+                    messages.insert(message);
+                }
+
+                Ok(Some(Body::BroadcastOk(BroadcastOkBody {
+                    msg_id: self.message_counter(),
                     in_reply_to: broadcast.msg_id,
-                }))
+                })))
             }
-            Body::Read(read) => Ok(Body::ReadOk(ReadOkBody {
+            Body::Read(read) => Ok(Some(Body::ReadOk(ReadOkBody {
                 messages: self.broadcast_messages.iter().copied().collect(),
                 in_reply_to: read.msg_id,
-            })),
-            Body::Topology(body) => {
-                self.topology = body.topology;
-                Ok(Body::TopologyOk(TopologyOkBody {
+            }))),
+            Body::Topology(mut body) => {
+                if let Some(neighbours) = body.topology.remove(&self.id) {
+                    for neighbour in neighbours {
+                        self.neighbour_broadcast_messages
+                            .entry(neighbour)
+                            .or_default();
+                    }
+                }
+                Ok(Some(Body::TopologyOk(TopologyOkBody {
                     in_reply_to: body.msg_id,
-                }))
+                })))
             }
             t => Err(anyhow!("cannot handle message of type {t:?}")),
         }
+    }
+
+    fn message_counter(&mut self) -> usize {
+        self.msg_counter += 1;
+        self.msg_counter
     }
 }
