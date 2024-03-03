@@ -1,10 +1,16 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
+
 use anyhow::anyhow;
 use anyhow::Result;
 
 use crate::protocol::Body;
+use crate::protocol::BroadcastOkBody;
 use crate::protocol::EchoOkBody;
 use crate::protocol::InitOkBody;
 use crate::protocol::Message;
+use crate::protocol::ReadOkBody;
+use crate::protocol::TopologyOkBody;
 use crate::transport::StdInTransport;
 use crate::transport::Transport;
 
@@ -15,6 +21,8 @@ pub(crate) struct Node<T = StdInTransport> {
     // Counter for message ids, monotonically increasing
     msg_counter: usize,
     transport: T,
+    broadcast_messages: HashSet<usize>,
+    topology: HashMap<String, Vec<String>>,
 }
 
 impl<T: Transport> Node<T> {
@@ -46,6 +54,8 @@ impl<T: Transport> Node<T> {
             id: init_body.node_id,
             msg_counter: 0,
             transport,
+            broadcast_messages: HashSet::new(),
+            topology: HashMap::new(),
         }
     }
 
@@ -58,7 +68,7 @@ impl<T: Transport> Node<T> {
     pub fn run(&mut self) -> Result<()> {
         loop {
             let msg = self.transport.read_message()?;
-            let response = handle_message(msg.body, self.msg_counter)?;
+            let response = self.handle_message(msg.body)?;
             self.send(msg.src, response)?;
         }
     }
@@ -76,18 +86,36 @@ impl<T: Transport> Node<T> {
         };
         self.transport.send_message(&msg)
     }
-}
 
-fn handle_message(
-    msg_body: Body,
-    cnt: usize,
-) -> Result<Body> {
-    match msg_body {
-        Body::Echo(echo_body) => Ok(Body::EchoOk(EchoOkBody {
-            msg_id: cnt,
-            in_reply_to: Some(echo_body.msg_id),
-            echo: echo_body.echo,
-        })),
-        t => Err(anyhow!("cannot handle message of type {t:?}")),
+    /// Handle incoming messages and return an appropriate response.
+    fn handle_message(
+        &mut self,
+        msg_body: Body,
+    ) -> Result<Body> {
+        match msg_body {
+            Body::Echo(echo_body) => Ok(Body::EchoOk(EchoOkBody {
+                msg_id: self.msg_counter,
+                in_reply_to: Some(echo_body.msg_id),
+                echo: echo_body.echo,
+            })),
+            Body::Broadcast(broadcast) => {
+                self.broadcast_messages.insert(broadcast.message);
+                Ok(Body::BroadcastOk(BroadcastOkBody {
+                    msg_id: self.msg_counter,
+                    in_reply_to: broadcast.msg_id,
+                }))
+            }
+            Body::Read(read) => Ok(Body::ReadOk(ReadOkBody {
+                messages: self.broadcast_messages.iter().copied().collect(),
+                in_reply_to: read.msg_id,
+            })),
+            Body::Topology(body) => {
+                self.topology = body.topology;
+                Ok(Body::TopologyOk(TopologyOkBody {
+                    in_reply_to: body.msg_id,
+                }))
+            }
+            t => Err(anyhow!("cannot handle message of type {t:?}")),
+        }
     }
 }
