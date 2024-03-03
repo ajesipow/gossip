@@ -1,0 +1,38 @@
+name: General checks
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: taiki-e/install-action@just
+    - uses: actions/checkout@v4
+
+    - name: Just CI
+      run: just c
+  test-echo:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin' # See 'Supported distributions' for available options
+        java-version: '21'
+    - name: Graphviz
+      run: sudo apt install graphviz
+    - name: Gnuplot
+      run: sudo apt install gnuplot
+    - name: Download maelstrom
+      run: curl -OL https://github.com/jepsen-io/maelstrom/releases/download/v0.2.3/maelstrom.tar.bz2
+    - name: Untar
+      run: tar xvf maelstrom.tar.bz2
+    - name: Cargo build
+      run: cargo build
+    - name: Maelstrom Echo
+      run: ./maelstrom/maelstrom test -w echo --bin ./target/debug/gossip --node-count 1 --time-limit 5
