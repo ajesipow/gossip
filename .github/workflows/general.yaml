@@ -33,4 +33,4 @@ jobs:
     - name: Cargo build
       run: cargo build
     - name: Maelstrom Echo
-      run: ./maelstrom test -w echo --bin ../target/debug/gossip --node-count 1 --time-limit 5
+      run: ./maelstrom/maelstrom test -w echo --bin ./target/debug/gossip --node-count 1 --time-limit 5
