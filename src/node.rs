@@ -49,6 +49,12 @@ impl<T: Transport> Node<T> {
         }
     }
 
+    /// Run the node.
+    /// Lets the node read and respond to incoming messages.
+    ///
+    /// # Errors
+    /// Throws an error if the message cannot be read, sent or is of an unknown
+    /// type.
     pub fn run(&mut self) -> Result<()> {
         loop {
             let msg = self.transport.read_message()?;
@@ -57,7 +63,8 @@ impl<T: Transport> Node<T> {
         }
     }
 
-    pub fn send(
+    /// Send a message message from the node.
+    fn send(
         &mut self,
         dest: String,
         body: Body,
