@@ -1,6 +1,5 @@
 use anyhow::Result;
 use node::Node;
-use tracing::Level;
 use transport::StdInTransport;
 
 mod node;
