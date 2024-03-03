@@ -31,15 +31,15 @@ impl<T: Transport> Node<T> {
         let Body::Init(init_body) = init_msg.body else {
             panic!("expected init message, got: {:?}", init_msg.body)
         };
-
+        let reply = Message {
+            src: init_msg.dest,
+            dest: init_msg.src,
+            body: Body::InitOk(InitOkBody {
+                in_reply_to: init_body.msg_id,
+            }),
+        };
         transport
-            .send_message(Message {
-                src: init_msg.dest,
-                dest: init_msg.src,
-                body: Body::InitOk(InitOkBody {
-                    in_reply_to: init_body.msg_id,
-                }),
-            })
+            .send_message(&reply)
             .expect("be able to send init ok response");
 
         Self {
@@ -67,7 +67,7 @@ impl<T: Transport> Node<T> {
             dest,
             body,
         };
-        self.transport.send_message(msg)
+        self.transport.send_message(&msg)
     }
 }
 
