@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Message {
@@ -16,6 +17,19 @@ pub(crate) enum Body {
     EchoOk(EchoOkBody),
     Init(InitBody),
     InitOk(InitOkBody),
+    Generate(GenerateBody),
+    GenerateOk(GenerateOkBody),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct GenerateBody {
+    pub msg_id: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct GenerateOkBody {
+    pub id: Uuid,
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -28,7 +42,7 @@ pub(crate) struct EchoBody {
 pub(crate) struct EchoOkBody {
     pub echo: String,
     pub msg_id: usize,
-    pub in_reply_to: Option<usize>,
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

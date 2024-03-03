@@ -1,8 +1,10 @@
 use anyhow::anyhow;
 use anyhow::Result;
+use uuid::Uuid;
 
 use crate::protocol::Body;
 use crate::protocol::EchoOkBody;
+use crate::protocol::GenerateOkBody;
 use crate::protocol::InitOkBody;
 use crate::protocol::Message;
 use crate::transport::StdInTransport;
@@ -85,8 +87,12 @@ fn handle_message(
     match msg_body {
         Body::Echo(echo_body) => Ok(Body::EchoOk(EchoOkBody {
             msg_id: cnt,
-            in_reply_to: Some(echo_body.msg_id),
+            in_reply_to: echo_body.msg_id,
             echo: echo_body.echo,
+        })),
+        Body::Generate(generate_body) => Ok(Body::GenerateOk(GenerateOkBody {
+            id: Uuid::new_v4(),
+            in_reply_to: generate_body.msg_id,
         })),
         t => Err(anyhow!("cannot handle message of type {t:?}")),
     }
