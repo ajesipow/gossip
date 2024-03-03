@@ -52,28 +52,35 @@ impl<T: Transport> Node<T> {
     pub fn run(&mut self) -> Result<()> {
         loop {
             let msg = self.transport.read_message()?;
-            let response = handle_message(msg, self.id.clone(), self.msg_counter)?;
-            self.transport.send_message(response)?;
+            let response = handle_message(msg.body, self.msg_counter)?;
+            self.send(msg.src, response)?;
         }
+    }
+
+    pub fn send(
+        &mut self,
+        dest: String,
+        body: Body,
+    ) -> Result<()> {
+        let msg = Message {
+            src: self.id.clone(),
+            dest,
+            body,
+        };
+        self.transport.send_message(msg)
     }
 }
 
 fn handle_message(
-    msg: Message,
-    // TODO make &str
-    node_id: String,
+    msg_body: Body,
     cnt: usize,
-) -> Result<Message> {
-    match msg.body {
-        Body::Echo(echo_body) => Ok(Message {
-            src: node_id,
-            dest: msg.src,
-            body: Body::EchoOk(EchoOkBody {
-                msg_id: cnt,
-                in_reply_to: Some(echo_body.msg_id),
-                echo: echo_body.echo,
-            }),
-        }),
+) -> Result<Body> {
+    match msg_body {
+        Body::Echo(echo_body) => Ok(Body::EchoOk(EchoOkBody {
+            msg_id: cnt,
+            in_reply_to: Some(echo_body.msg_id),
+            echo: echo_body.echo,
+        })),
         t => Err(anyhow!("cannot handle message of type {t:?}")),
     }
 }
