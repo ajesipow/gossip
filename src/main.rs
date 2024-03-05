@@ -6,8 +6,10 @@ mod node;
 mod protocol;
 mod transport;
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let transport = StdInTransport::new();
-    let mut node = Node::new(transport);
-    node.run()
+    let mut node = Node::new(transport).await;
+    node.run().await?;
+    Ok(())
 }

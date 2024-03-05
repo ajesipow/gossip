@@ -34,9 +34,10 @@ impl<T: Transport> Node<T> {
     /// # Panics
     /// An init message is expected for creating the node. This method will
     /// panic if the message could not be read or is of a different type.
-    pub fn new(mut transport: T) -> Self {
+    pub async fn new(mut transport: T) -> Self {
         let init_msg = transport
             .read_message()
+            .await
             .expect("be able to read init message");
         let Body::Init(init_body) = init_msg.body else {
             panic!("expected init message, got: {:?}", init_msg.body)
@@ -50,6 +51,7 @@ impl<T: Transport> Node<T> {
         };
         transport
             .send_message(&reply)
+            .await
             .expect("be able to send init ok response");
 
         Self {
@@ -67,18 +69,18 @@ impl<T: Transport> Node<T> {
     /// # Errors
     /// Throws an error if the message cannot be read, sent or is of an unknown
     /// type.
-    pub fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         loop {
-            let msg = self.transport.read_message()?;
-            let response = self.handle_message(&msg.src, msg.body)?;
+            let msg = self.transport.read_message().await?;
+            let response = self.handle_message(&msg.src, msg.body).await?;
             if let Some(response_body) = response {
-                self.send(msg.src, response_body)?;
+                self.send(msg.src, response_body).await?;
             }
         }
     }
 
     /// Send a message message from the node.
-    fn send(
+    async fn send(
         &mut self,
         dest: String,
         body: Body,
@@ -88,11 +90,11 @@ impl<T: Transport> Node<T> {
             dest,
             body,
         };
-        self.transport.send_message(&msg)
+        self.transport.send_message(&msg).await
     }
 
     /// Handle incoming messages and return an appropriate response.
-    fn handle_message(
+    async fn handle_message(
         &mut self,
         src: &str,
         msg_body: Body,
@@ -122,7 +124,8 @@ impl<T: Transport> Node<T> {
                 for dest in receivers {
                     // No need to send the same message back
                     let msg_id = self.message_counter();
-                    self.send(dest, Body::Broadcast(BroadcastBody { message, msg_id }))?;
+                    self.send(dest, Body::Broadcast(BroadcastBody { message, msg_id }))
+                        .await?;
                 }
                 // The neighbour now has seen the message either because we
                 // received it from them or we sent it to them.

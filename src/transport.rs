@@ -9,10 +9,10 @@ use crate::protocol::Message;
 /// The main trait for retrieving messages.
 pub(crate) trait Transport {
     /// Reads a message from transport.
-    fn read_message(&mut self) -> Result<Message>;
+    async fn read_message(&mut self) -> Result<Message>;
 
     /// Sends a message via transport.
-    fn send_message(
+    async fn send_message(
         &mut self,
         msg: &Message,
     ) -> Result<()>;
@@ -31,7 +31,7 @@ impl StdInTransport {
 }
 
 impl Transport for StdInTransport {
-    fn read_message(&mut self) -> Result<Message> {
+    async fn read_message(&mut self) -> Result<Message> {
         self.buf.clear();
         stdin().read_line(&mut self.buf)?;
         debug!("Received message. Raw input: {:?}", &self.buf);
@@ -40,7 +40,7 @@ impl Transport for StdInTransport {
         Ok(msg)
     }
 
-    fn send_message(
+    async fn send_message(
         &mut self,
         msg: &Message,
     ) -> Result<()> {
