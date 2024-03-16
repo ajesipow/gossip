@@ -125,14 +125,14 @@ async fn handle_message(
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::EchoOk(_) => vec![],
+        MessageBody::EchoOk(_) => Default::default(),
         MessageBody::Init(body) => vec![PreMessage::new(
             MessageRecipient(src),
             PreMessageBody::InitOk(InitOkPreBody {
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::InitOk(_) => vec![],
+        MessageBody::InitOk(_) => Default::default(),
         MessageBody::Broadcast(body) => {
             let mut messages = vec![];
 
@@ -182,7 +182,7 @@ async fn handle_message(
 
             messages
         }
-        MessageBody::BroadcastOk(_) => vec![],
+        MessageBody::BroadcastOk(_) => Default::default(),
         MessageBody::Read(body) => {
             let messages = broadcast_messages.read().await;
             vec![PreMessage::new(
@@ -193,7 +193,7 @@ async fn handle_message(
                 }),
             )]
         }
-        MessageBody::ReadOk(_) => vec![],
+        MessageBody::ReadOk(_) => Default::default(),
         MessageBody::Topology(mut body) => {
             if let Some(node_id) = NODE_ID.get() {
                 if let Some(neighbours) = body.topology.remove(node_id) {
@@ -217,6 +217,6 @@ async fn handle_message(
                 }),
             )]
         }
-        MessageBody::TopologyOk(_) => vec![],
+        MessageBody::TopologyOk(_) => Default::default(),
     }
 }
