@@ -1,4 +1,4 @@
-use crate::primitives::MessageCount;
+use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
 use crate::protocol::BroadcastBody;
 use crate::protocol::BroadcastOkBody;
@@ -41,12 +41,12 @@ pub(crate) enum PreMessageBody {
 #[derive(Debug)]
 pub(crate) struct EchoOkPreBody {
     pub echo: String,
-    pub in_reply_to: usize,
+    pub in_reply_to: MessageId,
 }
 
 #[derive(Debug)]
 pub(crate) struct InitOkPreBody {
-    pub in_reply_to: usize,
+    pub in_reply_to: MessageId,
 }
 
 #[derive(Debug)]
@@ -56,22 +56,22 @@ pub(crate) struct BroadcastPreBody {
 
 #[derive(Debug)]
 pub(crate) struct BroadcastOkPreBody {
-    pub in_reply_to: usize,
+    pub in_reply_to: MessageId,
 }
 
 #[derive(Debug)]
 pub(crate) struct ReadOkPreBody {
     pub messages: Vec<usize>,
-    pub in_reply_to: usize,
+    pub in_reply_to: MessageId,
 }
 
 #[derive(Debug)]
 pub(crate) struct TopologyOkPreBody {
-    pub in_reply_to: usize,
+    pub in_reply_to: MessageId,
 }
 
-impl From<(PreMessage, String, MessageCount)> for Message {
-    fn from((pre_message, src, message_count): (PreMessage, String, MessageCount)) -> Self {
+impl From<(PreMessage, String, MessageId)> for Message {
+    fn from((pre_message, src, message_count): (PreMessage, String, MessageId)) -> Self {
         Message {
             src,
             dest: pre_message.dest,
@@ -80,33 +80,33 @@ impl From<(PreMessage, String, MessageCount)> for Message {
     }
 }
 
-impl From<(PreMessageBody, MessageCount)> for MessageBody {
-    fn from((body, msg_count): (PreMessageBody, MessageCount)) -> Self {
+impl From<(PreMessageBody, MessageId)> for MessageBody {
+    fn from((body, msg_count): (PreMessageBody, MessageId)) -> Self {
         match body {
             PreMessageBody::EchoOk(body) => Self::EchoOk(EchoOkBody {
                 echo: body.echo,
-                msg_id: msg_count.0,
+                msg_id: msg_count,
                 in_reply_to: body.in_reply_to,
             }),
             PreMessageBody::InitOk(body) => Self::InitOk(InitOkBody {
-                msg_id: msg_count.0,
+                msg_id: msg_count,
                 in_reply_to: body.in_reply_to,
             }),
             PreMessageBody::Broadcast(body) => Self::Broadcast(BroadcastBody {
                 message: body.message,
-                msg_id: msg_count.0,
+                msg_id: msg_count,
             }),
             PreMessageBody::BroadcastOk(body) => Self::BroadcastOk(BroadcastOkBody {
-                msg_id: msg_count.0,
+                msg_id: msg_count,
                 in_reply_to: body.in_reply_to,
             }),
             PreMessageBody::ReadOk(body) => Self::ReadOk(ReadOkBody {
                 messages: body.messages,
-                msg_id: msg_count.0,
+                msg_id: msg_count,
                 in_reply_to: body.in_reply_to,
             }),
             PreMessageBody::TopologyOk(body) => Self::TopologyOk(TopologyOkBody {
-                msg_id: msg_count.0,
+                msg_id: msg_count,
                 in_reply_to: body.in_reply_to,
             }),
         }

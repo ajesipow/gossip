@@ -1,6 +1,7 @@
 use anyhow::Result;
 use node::Node;
 
+mod ack_store;
 mod dispatch;
 mod message_handling;
 mod node;

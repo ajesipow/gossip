@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::error;
 
+use crate::ack_store::AckStore;
 use crate::node::NODE_ID;
 use crate::pre_message::BroadcastOkPreBody;
 use crate::pre_message::BroadcastPreBody;
@@ -21,6 +22,7 @@ use crate::protocol::MessageBody;
 /// Handle incoming messages and return an appropriate response.
 pub(crate) async fn handle_message(
     message: Message,
+    ack_store: Arc<RwLock<AckStore>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
 ) -> Vec<PreMessage> {
@@ -33,14 +35,20 @@ pub(crate) async fn handle_message(
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::EchoOk(_) => Default::default(),
+        MessageBody::EchoOk(b) => {
+            ack_store.write().await.ack_message_id(b.msg_id);
+            Default::default()
+        }
         MessageBody::Init(body) => vec![PreMessage::new(
             MessageRecipient(src),
             PreMessageBody::InitOk(InitOkPreBody {
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::InitOk(_) => Default::default(),
+        MessageBody::InitOk(b) => {
+            ack_store.write().await.ack_message_id(b.msg_id);
+            Default::default()
+        }
         MessageBody::Broadcast(body) => {
             let mut messages = vec![];
 
@@ -90,7 +98,10 @@ pub(crate) async fn handle_message(
 
             messages
         }
-        MessageBody::BroadcastOk(_) => Default::default(),
+        MessageBody::BroadcastOk(b) => {
+            ack_store.write().await.ack_message_id(b.msg_id);
+            Default::default()
+        }
         MessageBody::Read(body) => {
             let messages = broadcast_messages.read().await;
             vec![PreMessage::new(
@@ -101,7 +112,10 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::ReadOk(_) => Default::default(),
+        MessageBody::ReadOk(b) => {
+            ack_store.write().await.ack_message_id(b.msg_id);
+            Default::default()
+        }
         MessageBody::Topology(mut body) => {
             if let Some(node_id) = NODE_ID.get() {
                 if let Some(neighbours) = body.topology.remove(node_id) {
@@ -125,6 +139,9 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::TopologyOk(_) => Default::default(),
+        MessageBody::TopologyOk(b) => {
+            ack_store.write().await.ack_message_id(b.msg_id);
+            Default::default()
+        }
     }
 }
