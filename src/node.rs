@@ -1,65 +1,87 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::vec;
 
-use anyhow::anyhow;
 use anyhow::Result;
+use once_cell::sync::OnceCell;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::RwLock;
+use tracing::error;
 
-use crate::protocol::Body;
-use crate::protocol::BroadcastBody;
-use crate::protocol::BroadcastOkBody;
-use crate::protocol::EchoOkBody;
-use crate::protocol::InitOkBody;
+use crate::dispatch::MessageDispatch;
+use crate::pre_message::BroadcastOkPreBody;
+use crate::pre_message::BroadcastPreBody;
+use crate::pre_message::EchoOkPreBody;
+use crate::pre_message::InitOkPreBody;
+use crate::pre_message::PreMessage;
+use crate::pre_message::PreMessageBody;
+use crate::pre_message::ReadOkPreBody;
+use crate::pre_message::TopologyOkPreBody;
+use crate::primitives::MessageRecipient;
 use crate::protocol::Message;
-use crate::protocol::ReadOkBody;
-use crate::protocol::TopologyOkBody;
+use crate::protocol::MessageBody;
 use crate::transport::StdInTransport;
-use crate::transport::Transport;
+
+pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 
 /// A node representing a server
 #[derive(Debug)]
-pub(crate) struct Node<T = StdInTransport> {
-    id: String,
-    // Counter for message ids, monotonically increasing
-    msg_counter: usize,
-    transport: T,
-    broadcast_messages: HashSet<usize>,
-    // The broadcast messages we sent to or receveived from our neighbours
-    neighbour_broadcast_messages: HashMap<String, HashSet<usize>>,
+pub(crate) struct Node {
+    transport: StdInTransport,
+    dispatch_queue: Sender<PreMessage>,
+    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
+    // The broadcast messages we sent to or received from our neighbours
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
 }
 
-impl<T: Transport> Node<T> {
+impl Node {
     /// Creates a new node.
     /// The node can only be initialised with an init message received via .
     ///
     /// # Panics
     /// An init message is expected for creating the node. This method will
     /// panic if the message could not be read or is of a different type.
-    pub async fn new(mut transport: T) -> Self {
+    pub async fn new() -> Self {
+        let mut transport = StdInTransport::new();
+
         let init_msg = transport
             .read_message()
             .await
             .expect("be able to read init message");
-        let Body::Init(init_body) = init_msg.body else {
+
+        let MessageBody::Init(ref init_body) = init_msg.body else {
             panic!("expected init message, got: {:?}", init_msg.body)
         };
-        let reply = Message {
-            src: init_msg.dest,
-            dest: init_msg.src,
-            body: Body::InitOk(InitOkBody {
-                in_reply_to: init_body.msg_id,
-            }),
-        };
-        transport
-            .send_message(&reply)
-            .await
-            .expect("be able to send init ok response");
+        NODE_ID
+            .set(init_body.node_id.clone())
+            .expect("Node ID already set");
+
+        let (tx, rx) = mpsc::channel::<PreMessage>(10);
+        let mut message_sender = MessageDispatch::new(rx);
+        tokio::spawn(async move {
+            message_sender.run().await;
+        });
+
+        let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
+        let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
+
+        let msgs = handle_message(
+            init_msg,
+            broadcast_messages.clone(),
+            neighbour_broadcast_messages.clone(),
+        )
+        .await;
+        for msg in msgs {
+            tx.send(msg).await.expect("be able to send init message");
+        }
 
         Self {
-            id: init_body.node_id,
-            msg_counter: 0,
+            dispatch_queue: tx,
             transport,
-            broadcast_messages: HashSet::new(),
-            neighbour_broadcast_messages: HashMap::new(),
+            broadcast_messages,
+            neighbour_broadcast_messages,
         }
     }
 
@@ -71,95 +93,130 @@ impl<T: Transport> Node<T> {
     /// type.
     pub async fn run(&mut self) -> Result<()> {
         loop {
+            // TODO: Handle the error differently here
             let msg = self.transport.read_message().await?;
-            let response = self.handle_message(&msg.src, msg.body).await?;
-            if let Some(response_body) = response {
-                self.send(msg.src, response_body).await?;
-            }
+            let tx = self.dispatch_queue.clone();
+            let broadcast_messages = self.broadcast_messages.clone();
+            let neighbour_broadcast_messages = self.neighbour_broadcast_messages.clone();
+
+            tokio::spawn(async move {
+                let responses =
+                    handle_message(msg, broadcast_messages, neighbour_broadcast_messages).await;
+                for msg in responses {
+                    let _ = tx.send(msg).await;
+                }
+            });
         }
     }
+}
 
-    /// Send a message message from the node.
-    async fn send(
-        &mut self,
-        dest: String,
-        body: Body,
-    ) -> Result<()> {
-        let msg = Message {
-            src: self.id.clone(),
-            dest,
-            body,
-        };
-        self.transport.send_message(&msg).await
-    }
+/// Handle incoming messages and return an appropriate response.
+async fn handle_message(
+    message: Message,
+    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+) -> Vec<PreMessage> {
+    let src = message.src;
+    match message.body {
+        MessageBody::Echo(body) => vec![PreMessage::new(
+            MessageRecipient(src),
+            PreMessageBody::EchoOk(EchoOkPreBody {
+                echo: body.echo,
+                in_reply_to: body.msg_id,
+            }),
+        )],
+        MessageBody::EchoOk(_) => vec![],
+        MessageBody::Init(body) => vec![PreMessage::new(
+            MessageRecipient(src),
+            PreMessageBody::InitOk(InitOkPreBody {
+                in_reply_to: body.msg_id,
+            }),
+        )],
+        MessageBody::InitOk(_) => vec![],
+        MessageBody::Broadcast(body) => {
+            let mut messages = vec![];
 
-    /// Handle incoming messages and return an appropriate response.
-    async fn handle_message(
-        &mut self,
-        src: &str,
-        msg_body: Body,
-    ) -> Result<Option<Body>> {
-        match msg_body {
-            Body::Echo(echo_body) => Ok(Some(Body::EchoOk(EchoOkBody {
-                msg_id: self.message_counter(),
-                in_reply_to: Some(echo_body.msg_id),
-                echo: echo_body.echo,
-            }))),
-            Body::BroadcastOk(_) => Ok(None),
-            Body::Broadcast(broadcast) => {
-                let message = broadcast.message;
-                self.broadcast_messages.insert(message);
-                let receivers: Vec<String> = self
-                    .neighbour_broadcast_messages
-                    .iter()
-                    .filter_map(|(neighbour, messages)| {
-                        if src != neighbour && !messages.contains(&message) {
-                            Some(neighbour.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                // Send message to neighbours if they have not already seen the same ID
-                for dest in receivers {
-                    // No need to send the same message back
-                    let msg_id = self.message_counter();
-                    self.send(dest, Body::Broadcast(BroadcastBody { message, msg_id }))
-                        .await?;
-                }
-                // The neighbour now has seen the message either because we
-                // received it from them or we sent it to them.
-                for (_, messages) in self.neighbour_broadcast_messages.iter_mut() {
-                    messages.insert(message);
-                }
+            let broadcast_message = body.message;
+            let mut broadcast_messages_lock = broadcast_messages.write().await;
+            broadcast_messages_lock.insert(broadcast_message);
+            drop(broadcast_messages_lock);
 
-                Ok(Some(Body::BroadcastOk(BroadcastOkBody {
-                    msg_id: self.message_counter(),
-                    in_reply_to: broadcast.msg_id,
-                })))
-            }
-            Body::Read(read) => Ok(Some(Body::ReadOk(ReadOkBody {
-                messages: self.broadcast_messages.iter().copied().collect(),
-                in_reply_to: read.msg_id,
-            }))),
-            Body::Topology(mut body) => {
-                if let Some(neighbours) = body.topology.remove(&self.id) {
+            // Record which message we already received from another node so we don't
+            // unnecessarily send it back again.
+            let mut neighbour_broadcast_messages_lock = neighbour_broadcast_messages.write().await;
+            neighbour_broadcast_messages_lock
+                .entry(src.clone())
+                .or_default()
+                .insert(broadcast_message);
+            drop(neighbour_broadcast_messages_lock);
+
+            let neighbour_broadcast_messages_lock = neighbour_broadcast_messages.read().await;
+            let recipients: Vec<MessageRecipient> = neighbour_broadcast_messages_lock
+                .iter()
+                .filter_map(|(neighbour, messages)| {
+                    if &src != neighbour && !messages.contains(&broadcast_message) {
+                        // FIXME: avoid clone
+                        Some(MessageRecipient(neighbour.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            drop(neighbour_broadcast_messages_lock);
+
+            messages.push(PreMessage::new(
+                MessageRecipient(src),
+                PreMessageBody::BroadcastOk(BroadcastOkPreBody {
+                    in_reply_to: body.msg_id,
+                }),
+            ));
+
+            messages.extend(recipients.into_iter().map(|recipient| {
+                PreMessage::new(
+                    recipient,
+                    PreMessageBody::Broadcast(BroadcastPreBody {
+                        message: broadcast_message,
+                    }),
+                )
+            }));
+
+            messages
+        }
+        MessageBody::BroadcastOk(_) => vec![],
+        MessageBody::Read(body) => {
+            let messages = broadcast_messages.read().await;
+            vec![PreMessage::new(
+                MessageRecipient(src),
+                PreMessageBody::ReadOk(ReadOkPreBody {
+                    messages: messages.iter().copied().collect(),
+                    in_reply_to: body.msg_id,
+                }),
+            )]
+        }
+        MessageBody::ReadOk(_) => vec![],
+        MessageBody::Topology(mut body) => {
+            if let Some(node_id) = NODE_ID.get() {
+                if let Some(neighbours) = body.topology.remove(node_id) {
+                    let mut neighbour_broadcast_messages_lock =
+                        neighbour_broadcast_messages.write().await;
                     for neighbour in neighbours {
-                        self.neighbour_broadcast_messages
+                        neighbour_broadcast_messages_lock
                             .entry(neighbour)
                             .or_default();
                     }
+                    drop(neighbour_broadcast_messages_lock);
                 }
-                Ok(Some(Body::TopologyOk(TopologyOkBody {
-                    in_reply_to: body.msg_id,
-                })))
+            } else {
+                error!("NODE_ID uninitialised!")
             }
-            t => Err(anyhow!("cannot handle message of type {t:?}")),
-        }
-    }
 
-    fn message_counter(&mut self) -> usize {
-        self.msg_counter += 1;
-        self.msg_counter
+            vec![PreMessage::new(
+                MessageRecipient(src),
+                PreMessageBody::TopologyOk(TopologyOkPreBody {
+                    in_reply_to: body.msg_id,
+                }),
+            )]
+        }
+        MessageBody::TopologyOk(_) => vec![],
     }
 }

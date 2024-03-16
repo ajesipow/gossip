@@ -1,15 +1,16 @@
 use anyhow::Result;
 use node::Node;
-use transport::StdInTransport;
 
+mod dispatch;
 mod node;
+mod pre_message;
+mod primitives;
 mod protocol;
 mod transport;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let transport = StdInTransport::new();
-    let mut node = Node::new(transport).await;
+    let mut node = Node::new().await;
     node.run().await?;
     Ok(())
 }
