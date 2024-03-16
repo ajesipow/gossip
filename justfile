@@ -36,6 +36,18 @@ clean:
 # Fix clippy warnings and format the code.
 fix: _c-fix format
 
+test-echo:
+    ./maelstrom/maelstrom test -w echo --bin ./target/debug/gossip --node-count 1 --time-limit 5
+
+test-broadcast-3a:
+    ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 1 --time-limit 20 --rate 10
+
+test-broadcast-3b:
+    ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 5 --time-limit 20 --rate 10
+
+test: test-echo test-broadcast-3a test-broadcast-3b
+
+
 # Installs/updates the nightly rustfmt installation
 update-nightly-fmt:
 	rustup toolchain install --profile minimal nightly-2023-12-07 --no-self-update
