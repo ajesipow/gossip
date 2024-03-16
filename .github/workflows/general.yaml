@@ -35,8 +35,8 @@ jobs:
     - name: Cargo build
       run: cargo build
     - name: Test Echo
-      run: ./maelstrom/maelstrom test -w echo --bin ./target/debug/gossip --node-count 1 --time-limit 5
+      run: js test-echo
     - name: Test Broadcast 3a
-      run: ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 1 --time-limit 20 --rate 10
+      run: test-broadcast-3a
     - name: Test Broadcast 3b
-      run: ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 5 --time-limit 20 --rate 10
+      run: test-broadcast-3b

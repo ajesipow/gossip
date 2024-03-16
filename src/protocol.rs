@@ -3,17 +3,19 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::primitives::MessageRecipient;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Message {
     pub src: String,
-    pub dest: String,
-    pub body: Body,
+    pub dest: MessageRecipient,
+    pub body: MessageBody,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Body {
+pub(crate) enum MessageBody {
     Echo(EchoBody),
     EchoOk(EchoOkBody),
     Init(InitBody),
@@ -35,6 +37,7 @@ pub(crate) struct TopologyBody {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TopologyOkBody {
     pub in_reply_to: usize,
+    pub msg_id: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -46,6 +49,7 @@ pub(crate) struct ReadBody {
 pub(crate) struct ReadOkBody {
     pub messages: Vec<usize>,
     pub in_reply_to: usize,
+    pub msg_id: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,7 +74,7 @@ pub(crate) struct EchoBody {
 pub(crate) struct EchoOkBody {
     pub echo: String,
     pub msg_id: usize,
-    pub in_reply_to: Option<usize>,
+    pub in_reply_to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -83,4 +87,5 @@ pub(crate) struct InitBody {
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct InitOkBody {
     pub in_reply_to: usize,
+    pub msg_id: usize,
 }
