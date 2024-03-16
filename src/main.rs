@@ -2,6 +2,7 @@ use anyhow::Result;
 use node::Node;
 
 mod dispatch;
+mod message_handling;
 mod node;
 mod pre_message;
 mod primitives;
