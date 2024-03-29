@@ -45,6 +45,9 @@ test-broadcast-3a:
 test-broadcast-3b:
     ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 5 --time-limit 20 --rate 10
 
+test-broadcast-3c:
+    ./maelstrom/maelstrom test -w broadcast --bin ./target/debug/gossip --node-count 5 --time-limit 20 --rate 10 --nemesis partition
+
 test: test-echo test-broadcast-3a test-broadcast-3b
 
 

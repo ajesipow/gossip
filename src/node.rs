@@ -7,13 +7,18 @@ use once_cell::sync::OnceCell;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
+use tracing::debug;
+use tracing::info;
+use tracing::span;
+use tracing::Level;
 
-use crate::ack_store::AckStore;
+use crate::message_store::MsgStore;
 use crate::dispatch::MessageDispatcher;
 use crate::message_handling::handle_message;
-use crate::pre_message::PreMessage;
-use crate::protocol::Message;
+use crate::message_handling::QueuedMessage;
 use crate::protocol::MessageBody;
+use crate::retry::RetryHandler;
+use crate::retry::RetryMessage;
 use crate::transport::StdInTransport;
 
 pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
@@ -22,8 +27,10 @@ pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 #[derive(Debug)]
 pub(crate) struct Node {
     transport: StdInTransport,
-    pre_message_queue: Sender<PreMessage>,
-    ack_store: Arc<RwLock<AckStore>>,
+    msg_dispatch_queue_tx: Sender<QueuedMessage>,
+    // Map the message ids to the broadcast messages, to track which broadcast message has
+    // been acknowledged by a recipient
+    msg_store: Arc<RwLock<MsgStore>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     // The broadcast messages we sent to or received from our neighbours
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
@@ -37,6 +44,7 @@ impl Node {
     /// An init message is expected for creating the node. This method will
     /// panic if the message could not be read or is of a different type.
     pub async fn new() -> Self {
+        info!("Starting Node");
         let mut transport = StdInTransport::new();
 
         let init_msg = transport
@@ -51,35 +59,47 @@ impl Node {
             .set(init_body.node_id.clone())
             .expect("Node ID already set");
 
-        let (pre_message_queue_tx, pre_message_queue_rx) = mpsc::channel::<PreMessage>(32);
-        let (_retry_queue_tx, retry_queue_rx) = mpsc::channel::<Message>(32);
-        let ack_store = Arc::new(RwLock::new(AckStore::new()));
-        let mut message_dispatcher =
-            MessageDispatcher::new(pre_message_queue_rx, retry_queue_rx, ack_store.clone());
+        // FIXME AJES: shutdown gracefully
+
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<QueuedMessage>(32);
+        let (retry_queue_tx, retry_queue_rx) = mpsc::channel::<RetryMessage>(16);
+        let msg_store = Arc::new(RwLock::new(MsgStore::new()));
+        let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
+        let mut message_dispatcher = MessageDispatcher::new(
+            msg_dispatch_queue_rx,
+            retry_queue_tx,
+            neighbour_broadcast_messages.clone(),
+            msg_store.clone(),
+        );
         tokio::spawn(async move {
             message_dispatcher.run().await;
         });
+        let msg_dispatch_queue_tx_for_retry_handler = msg_dispatch_queue_tx.clone();
+        let mut retry_handler =
+            RetryHandler::new(retry_queue_rx, msg_dispatch_queue_tx_for_retry_handler);
+        tokio::spawn(async move {
+            retry_handler.run().await;
+        });
 
         let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
-        let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
         let msgs = handle_message(
             init_msg,
-            ack_store.clone(),
+            msg_store.clone(),
             broadcast_messages.clone(),
             neighbour_broadcast_messages.clone(),
         )
         .await;
         for msg in msgs {
-            pre_message_queue_tx
-                .send(msg)
+            msg_dispatch_queue_tx
+                .send(QueuedMessage::Initial(msg))
                 .await
                 .expect("be able to send init message");
         }
 
         Self {
-            pre_message_queue: pre_message_queue_tx,
+            msg_dispatch_queue_tx,
             transport,
-            ack_store,
+            msg_store,
             broadcast_messages,
             neighbour_broadcast_messages,
         }
@@ -93,12 +113,17 @@ impl Node {
     /// type.
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            // TODO: Handle the error differently here
+            let span = span!(
+                Level::INFO,
+                "node_operation",
+                node_id = NODE_ID.get().expect("Node ID set")
+            );
+            let _enter = span.enter();
             let msg = self.transport.read_message().await?;
-            let tx = self.pre_message_queue.clone();
+            let tx = self.msg_dispatch_queue_tx.clone();
             let broadcast_messages = self.broadcast_messages.clone();
             let neighbour_broadcast_messages = self.neighbour_broadcast_messages.clone();
-            let ack_store = self.ack_store.clone();
+            let ack_store = self.msg_store.clone();
             tokio::spawn(async move {
                 let responses = handle_message(
                     msg,
@@ -107,9 +132,10 @@ impl Node {
                     neighbour_broadcast_messages,
                 )
                 .await;
+                debug!("sending initial messages: {:?}", responses.len());
                 // TODO join all?
                 for msg in responses {
-                    let _ = tx.send(msg).await;
+                    let _ = tx.send(QueuedMessage::Initial(msg)).await;
                 }
             });
         }

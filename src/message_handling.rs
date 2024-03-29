@@ -3,9 +3,12 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tracing::debug;
 use tracing::error;
+use tracing::instrument;
+use tracing::warn;
 
-use crate::ack_store::AckStore;
+use crate::message_store::MsgStore;
 use crate::node::NODE_ID;
 use crate::pre_message::BroadcastOkPreBody;
 use crate::pre_message::BroadcastPreBody;
@@ -19,10 +22,18 @@ use crate::primitives::MessageRecipient;
 use crate::protocol::Message;
 use crate::protocol::MessageBody;
 
+/// The kind of message we want so queue for sending
+#[derive(Debug)]
+pub(crate) enum QueuedMessage {
+    Initial(PreMessage),
+    ForRetry(Message),
+}
+
 /// Handle incoming messages and return an appropriate response.
+#[instrument(skip(msg_store, broadcast_messages, neighbour_broadcast_messages))]
 pub(crate) async fn handle_message(
     message: Message,
-    ack_store: Arc<RwLock<AckStore>>,
+    msg_store: Arc<RwLock<MsgStore>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
 ) -> Vec<PreMessage> {
@@ -35,21 +46,25 @@ pub(crate) async fn handle_message(
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::EchoOk(b) => {
-            ack_store.write().await.ack_message_id(b.msg_id);
+        MessageBody::EchoOk(_) => {
+            debug!("Received Echo Ok msg from {:?}", src);
             Default::default()
         }
-        MessageBody::Init(body) => vec![PreMessage::new(
-            MessageRecipient(src),
-            PreMessageBody::InitOk(InitOkPreBody {
-                in_reply_to: body.msg_id,
-            }),
-        )],
-        MessageBody::InitOk(b) => {
-            ack_store.write().await.ack_message_id(b.msg_id);
+        MessageBody::Init(body) => {
+            debug!("Received Init msg from {:?}", src);
+            vec![PreMessage::new(
+                MessageRecipient(src),
+                PreMessageBody::InitOk(InitOkPreBody {
+                    in_reply_to: body.msg_id,
+                }),
+            )]
+        }
+        MessageBody::InitOk(_) => {
+            debug!("Received init Ok msg from {:?}", src);
             Default::default()
         }
         MessageBody::Broadcast(body) => {
+            debug!("Received Broadcast msg from {:?}", src);
             let mut messages = vec![];
 
             let broadcast_message = body.message;
@@ -59,18 +74,21 @@ pub(crate) async fn handle_message(
 
             // Record which message we already received from another node so we don't
             // unnecessarily send it back again.
+            // We're not just adding any `src` as key to this map because we're also
+            // receiving these messages from clients which we don't want to
             let mut neighbour_broadcast_messages_lock = neighbour_broadcast_messages.write().await;
             neighbour_broadcast_messages_lock
-                .entry(src.clone())
-                .or_default()
-                .insert(broadcast_message);
+                .get_mut(&src)
+                .map(|msgs| msgs.insert(broadcast_message));
             drop(neighbour_broadcast_messages_lock);
 
+            // Send the same broadcast message to other nodes that we think have not seen it
+            // yet.
             let neighbour_broadcast_messages_lock = neighbour_broadcast_messages.read().await;
             let recipients: Vec<MessageRecipient> = neighbour_broadcast_messages_lock
                 .iter()
                 .filter_map(|(neighbour, messages)| {
-                    if &src != neighbour && !messages.contains(&broadcast_message) {
+                    if !messages.contains(&broadcast_message) {
                         // FIXME: avoid clone
                         Some(MessageRecipient(neighbour.clone()))
                     } else {
@@ -99,10 +117,27 @@ pub(crate) async fn handle_message(
             messages
         }
         MessageBody::BroadcastOk(b) => {
-            ack_store.write().await.ack_message_id(b.msg_id);
+            debug!("Received broadcast Ok msg from {:?}", src);
+            // Remember that the recipient received the broadcast message so that we do not
+            // send it again.
+            let broadcast_message = msg_store.read().await.get(&b.in_reply_to);
+            if let Some(broadcast_message) = broadcast_message {
+                let mut neighbour_broadcast_messages_lock =
+                    neighbour_broadcast_messages.write().await;
+                neighbour_broadcast_messages_lock
+                    .get_mut(&src)
+                    .map(|msgs| msgs.insert(broadcast_message));
+                drop(neighbour_broadcast_messages_lock);
+            } else {
+                warn!(
+                    "Received broadcast message acknowledgement for unknown message id {:?}",
+                    b.msg_id
+                )
+            }
             Default::default()
         }
         MessageBody::Read(body) => {
+            debug!("Received Read msg from {:?}", src);
             let messages = broadcast_messages.read().await;
             vec![PreMessage::new(
                 MessageRecipient(src),
@@ -112,11 +147,12 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::ReadOk(b) => {
-            ack_store.write().await.ack_message_id(b.msg_id);
+        MessageBody::ReadOk(_) => {
+            debug!("Received read Ok msg from {:?}", src);
             Default::default()
         }
         MessageBody::Topology(mut body) => {
+            debug!("Received Topology msg {:?} from {:?}", body, src);
             if let Some(node_id) = NODE_ID.get() {
                 if let Some(neighbours) = body.topology.remove(node_id) {
                     let mut neighbour_broadcast_messages_lock =
@@ -139,8 +175,8 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::TopologyOk(b) => {
-            ack_store.write().await.ack_message_id(b.msg_id);
+        MessageBody::TopologyOk(_) => {
+            debug!("Received topology Ok msg from {:?}", src);
             Default::default()
         }
     }

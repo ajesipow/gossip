@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Message {
     pub src: String,
     pub dest: MessageRecipient,
@@ -30,7 +30,7 @@ impl Message {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MessageBody {
@@ -46,63 +46,63 @@ pub(crate) enum MessageBody {
     TopologyOk(TopologyOkBody),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TopologyBody {
     pub msg_id: MessageId,
     pub topology: HashMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TopologyOkBody {
     pub in_reply_to: MessageId,
     pub msg_id: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ReadBody {
     pub msg_id: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ReadOkBody {
     pub messages: Vec<usize>,
     pub in_reply_to: MessageId,
     pub msg_id: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct BroadcastBody {
     pub message: usize,
     pub msg_id: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct BroadcastOkBody {
     pub msg_id: MessageId,
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct EchoBody {
     pub echo: String,
     pub msg_id: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct EchoOkBody {
     pub echo: String,
     pub msg_id: MessageId,
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct InitBody {
     pub msg_id: MessageId,
     pub node_id: String,
     pub node_ids: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct InitOkBody {
     pub in_reply_to: MessageId,
     pub msg_id: MessageId,
