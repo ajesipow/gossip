@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use crate::primitives::MessageId;
 
-/// Stores message ids to broadcast messages
+/// Stores broadcast messages by a message ID so that we can know which
+/// broadcast message has been acknowledged when receiving a broadcast reply.
 #[derive(Debug)]
-pub(crate) struct MsgStore {
-    store: HashMap<MessageId, usize>,
+pub(crate) struct BroadcastMessageStore {
+    broadcast_msg_by_msg_id: HashMap<MessageId, usize>,
 }
 
-impl MsgStore {
-    /// Create a new [`MsgStore`]
+impl BroadcastMessageStore {
     pub(crate) fn new() -> Self {
         Self {
-            store: HashMap::with_capacity(1024),
+            broadcast_msg_by_msg_id: HashMap::with_capacity(1024),
         }
     }
 
@@ -21,13 +21,13 @@ impl MsgStore {
         msg_id: MessageId,
         broadcast_msg: usize,
     ) {
-        self.store.insert(msg_id, broadcast_msg);
+        self.broadcast_msg_by_msg_id.insert(msg_id, broadcast_msg);
     }
 
     pub(crate) fn get(
         &self,
         msg_id: &MessageId,
-    ) -> Option<usize> {
-        self.store.get(msg_id).copied()
+    ) -> Option<&usize> {
+        self.broadcast_msg_by_msg_id.get(msg_id)
     }
 }

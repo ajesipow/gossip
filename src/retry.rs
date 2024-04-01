@@ -1,47 +1,37 @@
-use std::collections::VecDeque;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
 
-use chrono::DateTime;
-use chrono::Utc;
-use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::debug;
 use tracing::error;
 
-use crate::message_handling::QueuedMessage;
-use crate::protocol::Message;
-
-#[derive(Debug)]
-pub struct RetryMessage {
-    last_dispatch: DateTime<Utc>,
-    msg: Message,
-}
-
-impl RetryMessage {
-    pub fn new(msg: Message) -> Self {
-        Self {
-            last_dispatch: Utc::now(),
-            msg,
-        }
-    }
-}
+use crate::pre_message::BroadcastPreBody;
+use crate::pre_message::PreMessage;
+use crate::pre_message::PreMessageBody;
+use crate::primitives::MessageRecipient;
 
 /// Handles message retries
 #[derive(Debug)]
 pub(crate) struct RetryHandler {
-    fifo: VecDeque<RetryMessage>,
-    retry_queue: Receiver<RetryMessage>,
-    msg_dispatch_queue_tx: Sender<QueuedMessage>,
+    msg_dispatch_queue_tx: Sender<PreMessage>,
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
 }
 
 impl RetryHandler {
     pub(crate) fn new(
-        retry_queue: Receiver<RetryMessage>,
-        msg_dispatch_queue_tx: Sender<QueuedMessage>,
+        msg_dispatch_queue_tx: Sender<PreMessage>,
+        neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+        broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     ) -> Self {
         Self {
-            fifo: VecDeque::new(),
-            retry_queue,
             msg_dispatch_queue_tx,
+            neighbour_broadcast_messages,
+            broadcast_messages,
         }
     }
 
@@ -49,45 +39,40 @@ impl RetryHandler {
         debug!("Running retry handler");
         // Periodically check for message to dispatch for sending
         loop {
-            if let Some(first) = self.fifo.pop_front() {
-                debug!(
-                    "Message {:?} in retry queue, last dispatched {:?}",
-                    first.msg.id(),
-                    first.last_dispatch
-                );
-                if (Utc::now() - first.last_dispatch).num_milliseconds() >= 100 {
-                    let msg_id = first.msg.id();
-                    debug!("Dispatching message {:?} again", msg_id);
-                    // Dispatch again
-                    if let Err(e) = self
-                        .msg_dispatch_queue_tx
-                        .send(QueuedMessage::ForRetry(first.msg.clone()))
-                        .await
-                    {
-                        error!("Failed retrying message: {:?}", e);
-                        self.fifo.push_front(first);
-                    }
-                } else {
-                    debug!("Putting message {:?} into queue again", first.msg.id());
-                    self.fifo.push_front(first);
+            sleep(Duration::from_millis(100)).await;
+
+            // Send the same broadcast message to other nodes that we think have not seen it
+            // yet.
+            let neighbour_broadcast_messages_lock = self.neighbour_broadcast_messages.read().await;
+            let broadcast_messages_lock = self.broadcast_messages.read().await;
+            let unacknowledged_broadcast_messages: Vec<_> = neighbour_broadcast_messages_lock
+                .iter()
+                .flat_map(|(neighbour, acknowledged_messages)| {
+                    broadcast_messages_lock
+                        .difference(acknowledged_messages)
+                        .map(|unacknowledged_message| {
+                            PreMessage::new(
+                                // TODO avoid clone
+                                MessageRecipient(neighbour.clone()),
+                                PreMessageBody::Broadcast(BroadcastPreBody {
+                                    message: *unacknowledged_message,
+                                }),
+                            )
+                        })
+                })
+                .collect();
+            drop(neighbour_broadcast_messages_lock);
+            drop(broadcast_messages_lock);
+
+            for unacknowledged_broadcast_message in unacknowledged_broadcast_messages {
+                if let Err(e) = self
+                    .msg_dispatch_queue_tx
+                    .send(unacknowledged_broadcast_message)
+                    .await
+                {
+                    error!("Could not retry broadcast message: {:?}", e);
                 }
             }
-            if let Some(to_retry) = self.retry_queue.recv().await {
-                debug!("Received message {:?} for retry", to_retry.msg.id());
-                self.schedule_for_retry(to_retry);
-            }
         }
-    }
-
-    pub(crate) fn schedule_for_retry(
-        &mut self,
-        message: RetryMessage,
-    ) {
-        debug!(
-            "Scheduling message for retry, receiver: {:?}",
-            message.msg.dest
-        );
-        self.fifo.push_back(message);
-        debug!("fifo contents {:?}", self.fifo);
     }
 }

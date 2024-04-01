@@ -8,7 +8,7 @@ use tracing::error;
 use tracing::instrument;
 use tracing::warn;
 
-use crate::message_store::MsgStore;
+use crate::message_store::BroadcastMessageStore;
 use crate::node::NODE_ID;
 use crate::pre_message::BroadcastOkPreBody;
 use crate::pre_message::BroadcastPreBody;
@@ -22,20 +22,13 @@ use crate::primitives::MessageRecipient;
 use crate::protocol::Message;
 use crate::protocol::MessageBody;
 
-/// The kind of message we want so queue for sending
-#[derive(Debug)]
-pub(crate) enum QueuedMessage {
-    Initial(PreMessage),
-    ForRetry(Message),
-}
-
 /// Handle incoming messages and return an appropriate response.
-#[instrument(skip(msg_store, broadcast_messages, neighbour_broadcast_messages))]
+#[instrument(skip(broadcast_messages, neighbour_broadcast_messages))]
 pub(crate) async fn handle_message(
     message: Message,
-    msg_store: Arc<RwLock<MsgStore>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
 ) -> Vec<PreMessage> {
     let src = message.src;
     match message.body {
@@ -120,19 +113,20 @@ pub(crate) async fn handle_message(
             debug!("Received broadcast Ok msg from {:?}", src);
             // Remember that the recipient received the broadcast message so that we do not
             // send it again.
-            let broadcast_message = msg_store.read().await.get(&b.in_reply_to);
-            if let Some(broadcast_message) = broadcast_message {
+            let maybe_broadcast_msg = broadcast_message_store
+                .read()
+                .await
+                .get(&b.in_reply_to)
+                .copied();
+            if let Some(broadcast_msg) = maybe_broadcast_msg {
                 let mut neighbour_broadcast_messages_lock =
                     neighbour_broadcast_messages.write().await;
                 neighbour_broadcast_messages_lock
                     .get_mut(&src)
-                    .map(|msgs| msgs.insert(broadcast_message));
+                    .map(|msgs| msgs.insert(broadcast_msg));
                 drop(neighbour_broadcast_messages_lock);
             } else {
-                warn!(
-                    "Received broadcast message acknowledgement for unknown message id {:?}",
-                    b.msg_id
-                )
+                warn!("Could not find message ID in broadcast store");
             }
             Default::default()
         }

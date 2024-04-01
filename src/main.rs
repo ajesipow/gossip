@@ -2,9 +2,9 @@ use anyhow::Result;
 use node::Node;
 use tracing::metadata::LevelFilter;
 
-mod message_store;
 mod dispatch;
 mod message_handling;
+mod message_store;
 mod node;
 mod pre_message;
 mod primitives;

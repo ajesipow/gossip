@@ -12,13 +12,12 @@ use tracing::info;
 use tracing::span;
 use tracing::Level;
 
-use crate::message_store::MsgStore;
 use crate::dispatch::MessageDispatcher;
 use crate::message_handling::handle_message;
-use crate::message_handling::QueuedMessage;
+use crate::message_store::BroadcastMessageStore;
+use crate::pre_message::PreMessage;
 use crate::protocol::MessageBody;
 use crate::retry::RetryHandler;
-use crate::retry::RetryMessage;
 use crate::transport::StdInTransport;
 
 pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
@@ -27,13 +26,11 @@ pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 #[derive(Debug)]
 pub(crate) struct Node {
     transport: StdInTransport,
-    msg_dispatch_queue_tx: Sender<QueuedMessage>,
-    // Map the message ids to the broadcast messages, to track which broadcast message has
-    // been acknowledged by a recipient
-    msg_store: Arc<RwLock<MsgStore>>,
+    msg_dispatch_queue_tx: Sender<PreMessage>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     // The broadcast messages we sent to or received from our neighbours
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
 }
 
 impl Node {
@@ -61,37 +58,35 @@ impl Node {
 
         // FIXME AJES: shutdown gracefully
 
-        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<QueuedMessage>(32);
-        let (retry_queue_tx, retry_queue_rx) = mpsc::channel::<RetryMessage>(16);
-        let msg_store = Arc::new(RwLock::new(MsgStore::new()));
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<PreMessage>(32);
         let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
-        let mut message_dispatcher = MessageDispatcher::new(
-            msg_dispatch_queue_rx,
-            retry_queue_tx,
-            neighbour_broadcast_messages.clone(),
-            msg_store.clone(),
-        );
+        let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
+        let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
+        let mut message_dispatcher =
+            MessageDispatcher::new(msg_dispatch_queue_rx, broadcast_message_store.clone());
         tokio::spawn(async move {
             message_dispatcher.run().await;
         });
         let msg_dispatch_queue_tx_for_retry_handler = msg_dispatch_queue_tx.clone();
-        let mut retry_handler =
-            RetryHandler::new(retry_queue_rx, msg_dispatch_queue_tx_for_retry_handler);
+        let mut retry_handler = RetryHandler::new(
+            msg_dispatch_queue_tx_for_retry_handler,
+            neighbour_broadcast_messages.clone(),
+            broadcast_messages.clone(),
+        );
         tokio::spawn(async move {
             retry_handler.run().await;
         });
 
-        let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
         let msgs = handle_message(
             init_msg,
-            msg_store.clone(),
             broadcast_messages.clone(),
             neighbour_broadcast_messages.clone(),
+            broadcast_message_store.clone(),
         )
         .await;
         for msg in msgs {
             msg_dispatch_queue_tx
-                .send(QueuedMessage::Initial(msg))
+                .send(msg)
                 .await
                 .expect("be able to send init message");
         }
@@ -99,9 +94,9 @@ impl Node {
         Self {
             msg_dispatch_queue_tx,
             transport,
-            msg_store,
             broadcast_messages,
             neighbour_broadcast_messages,
+            broadcast_message_store,
         }
     }
 
@@ -123,19 +118,19 @@ impl Node {
             let tx = self.msg_dispatch_queue_tx.clone();
             let broadcast_messages = self.broadcast_messages.clone();
             let neighbour_broadcast_messages = self.neighbour_broadcast_messages.clone();
-            let ack_store = self.msg_store.clone();
+            let broadcast_message_store = self.broadcast_message_store.clone();
             tokio::spawn(async move {
                 let responses = handle_message(
                     msg,
-                    ack_store,
                     broadcast_messages,
                     neighbour_broadcast_messages,
+                    broadcast_message_store,
                 )
                 .await;
                 debug!("sending initial messages: {:?}", responses.len());
                 // TODO join all?
                 for msg in responses {
-                    let _ = tx.send(QueuedMessage::Initial(msg)).await;
+                    let _ = tx.send(msg).await;
                 }
             });
         }
