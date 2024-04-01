@@ -39,7 +39,7 @@ impl RetryHandler {
         debug!("Running retry handler");
         // Periodically check for message to dispatch for sending
         loop {
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(500)).await;
 
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.

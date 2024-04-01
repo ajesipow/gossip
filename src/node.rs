@@ -57,8 +57,7 @@ impl Node {
             .expect("Node ID already set");
 
         // FIXME AJES: shutdown gracefully
-
-        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<PreMessage>(32);
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<PreMessage>(10000);
         let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
         let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
         let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
