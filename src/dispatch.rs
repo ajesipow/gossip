@@ -40,22 +40,32 @@ impl MessageDispatcher {
     pub(crate) async fn run(&mut self) {
         debug!("Running dispatch");
         loop {
-            if let Some(queued_msgs) = self.msg_dispatch_queue_rx.recv().await {
-                for msg in queued_msgs {
-                    // FIXME: avoid clone
-                    let msg: Message = (msg, self.node_id.clone(), self.next_message_id()).into();
-
-                    let _ = serialize_and_send(&msg);
-                    // Store the broadcast message by the ID so that we later know which broadcast
-                    // message was acknowledged (because the Broadcast reply only
-                    // contains the original message ID).
-                    if let MessageBody::Broadcast(ref body) = msg.body {
-                        self.broadcast_message_store
-                            .write()
-                            .await
-                            .insert(msg.id(), body.message);
-                    }
+            if let Some(queued_pre_msgs) = self.msg_dispatch_queue_rx.recv().await {
+                // FIXME: avoid clone
+                let msgs: Vec<Message> = queued_pre_msgs
+                    .into_iter()
+                    .map(|msg| Message::from((msg, self.node_id.clone(), self.next_message_id())))
+                    .collect();
+                for msg in &msgs {
+                    let _ = serialize_and_send(msg);
                 }
+                // Filter for the broadcast messages in advance so that we keep the lock on the
+                // message store below for as little time as possible.
+                let broadcast_msgs = msgs.into_iter().filter_map(|msg| {
+                    if let MessageBody::Broadcast(ref body) = msg.body {
+                        Some((msg.id(), body.message))
+                    } else {
+                        None
+                    }
+                });
+                // Store the broadcast message by the ID so that we later know which broadcast
+                // message was acknowledged (because the Broadcast reply only
+                // contains the original message ID).
+                let mut msg_store_lock = self.broadcast_message_store.write().await;
+                for (msg_id, broadcast_msg) in broadcast_msgs {
+                    msg_store_lock.insert(msg_id, broadcast_msg);
+                }
+                drop(msg_store_lock);
             }
         }
     }
