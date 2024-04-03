@@ -35,10 +35,10 @@ jobs:
     - name: Cargo build
       run: cargo build
     - name: Test Echo
-      run: js test-echo
+      run: just test-echo
     - name: Test Broadcast 3a
-      run: test-broadcast-3a
+      run: just test-broadcast-3a
     - name: Test Broadcast 3b
-      run: test-broadcast-3b
+      run: just test-broadcast-3b
     - name: Test Broadcast 3c
-      run: test-broadcast-3c
+      run: just test-broadcast-3c
