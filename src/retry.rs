@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use itertools::Itertools;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
@@ -17,14 +18,14 @@ use crate::primitives::MessageRecipient;
 /// Handles message retries
 #[derive(Debug)]
 pub(crate) struct RetryHandler {
-    msg_dispatch_queue_tx: Sender<PreMessage>,
+    msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
 }
 
 impl RetryHandler {
     pub(crate) fn new(
-        msg_dispatch_queue_tx: Sender<PreMessage>,
+        msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
         neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
         broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     ) -> Self {
@@ -39,7 +40,7 @@ impl RetryHandler {
         debug!("Running retry handler");
         // Periodically check for message to dispatch for sending
         loop {
-            sleep(Duration::from_millis(500)).await;
+            sleep(Duration::from_millis(100)).await;
 
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
@@ -50,6 +51,7 @@ impl RetryHandler {
                 .flat_map(|(neighbour, acknowledged_messages)| {
                     broadcast_messages_lock
                         .difference(acknowledged_messages)
+                        .sorted_unstable()
                         .map(|unacknowledged_message| {
                             PreMessage::new(
                                 // TODO avoid clone
@@ -64,14 +66,12 @@ impl RetryHandler {
             drop(neighbour_broadcast_messages_lock);
             drop(broadcast_messages_lock);
 
-            for unacknowledged_broadcast_message in unacknowledged_broadcast_messages {
-                if let Err(e) = self
-                    .msg_dispatch_queue_tx
-                    .send(unacknowledged_broadcast_message)
-                    .await
-                {
-                    error!("Could not retry broadcast message: {:?}", e);
-                }
+            if let Err(e) = self
+                .msg_dispatch_queue_tx
+                .send(unacknowledged_broadcast_messages)
+                .await
+            {
+                error!("Could not retry broadcast message: {:?}", e);
             }
         }
     }

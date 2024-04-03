@@ -26,7 +26,7 @@ pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 #[derive(Debug)]
 pub(crate) struct Node {
     transport: StdInTransport,
-    msg_dispatch_queue_tx: Sender<PreMessage>,
+    msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
     broadcast_messages: Arc<RwLock<HashSet<usize>>>,
     // The broadcast messages we sent to or received from our neighbours
     neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
@@ -57,7 +57,8 @@ impl Node {
             .expect("Node ID already set");
 
         // FIXME AJES: shutdown gracefully
-        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<PreMessage>(10000);
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) =
+            mpsc::channel::<Vec<PreMessage>>(10000);
         let neighbour_broadcast_messages = Arc::new(RwLock::new(HashMap::new()));
         let broadcast_messages = Arc::new(RwLock::new(HashSet::new()));
         let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
@@ -83,12 +84,10 @@ impl Node {
             broadcast_message_store.clone(),
         )
         .await;
-        for msg in msgs {
-            msg_dispatch_queue_tx
-                .send(msg)
-                .await
-                .expect("be able to send init message");
-        }
+        msg_dispatch_queue_tx
+            .send(msgs)
+            .await
+            .expect("be able to send init message");
 
         Self {
             msg_dispatch_queue_tx,
@@ -127,10 +126,7 @@ impl Node {
                 )
                 .await;
                 debug!("sending initial messages: {:?}", responses.len());
-                // TODO join all?
-                for msg in responses {
-                    let _ = tx.send(msg).await;
-                }
+                let _ = tx.send(responses).await;
             });
         }
     }
