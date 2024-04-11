@@ -24,10 +24,10 @@ impl BroadcastMessageStore {
         self.broadcast_msg_by_msg_id.insert(msg_id, broadcast_msg);
     }
 
-    pub(crate) fn get(
-        &self,
+    pub(crate) fn remove(
+        &mut self,
         msg_id: &MessageId,
-    ) -> Option<&usize> {
-        self.broadcast_msg_by_msg_id.get(msg_id)
+    ) -> Option<usize> {
+        self.broadcast_msg_by_msg_id.remove(msg_id)
     }
 }

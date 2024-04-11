@@ -68,15 +68,6 @@ impl Node {
             message_dispatcher.run().await;
         });
         let msg_dispatch_queue_tx_for_retry_handler = msg_dispatch_queue_tx.clone();
-        let mut retry_handler = RetryHandler::new(
-            msg_dispatch_queue_tx_for_retry_handler,
-            neighbour_broadcast_messages.clone(),
-            broadcast_messages.clone(),
-        );
-        tokio::spawn(async move {
-            retry_handler.run().await;
-        });
-
         let msgs = handle_message(
             init_msg,
             broadcast_messages.clone(),
@@ -88,6 +79,15 @@ impl Node {
             .send(msgs)
             .await
             .expect("be able to send init message");
+
+        let mut retry_handler = RetryHandler::new(
+            msg_dispatch_queue_tx_for_retry_handler,
+            neighbour_broadcast_messages.clone(),
+            broadcast_messages.clone(),
+        );
+        tokio::spawn(async move {
+            retry_handler.run().await;
+        });
 
         Self {
             msg_dispatch_queue_tx,

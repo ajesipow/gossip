@@ -44,7 +44,7 @@ impl MessageDispatcher {
                 // FIXME: avoid clone
                 let msgs: Vec<Message> = queued_pre_msgs
                     .into_iter()
-                    .map(|msg| Message::from((msg, self.node_id.clone(), self.next_message_id())))
+                    .map(|msg| (msg, self.node_id.clone(), self.next_message_id()).into())
                     .collect();
                 for msg in &msgs {
                     let _ = serialize_and_send(msg);
@@ -78,7 +78,10 @@ impl MessageDispatcher {
 
 fn serialize_and_send(msg: &Message) -> Result<()> {
     if let Ok(serialized_response) = serde_json::to_string(&msg) {
-        debug!("Sending message from {:?} to {:?}", msg.src, msg.dest);
+        debug!(
+            "Sending message {} from {:?} to {:?}",
+            serialized_response, msg.src, msg.dest
+        );
         // Send to stdout
         println!("{serialized_response}");
         Ok(())

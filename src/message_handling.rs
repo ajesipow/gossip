@@ -113,11 +113,7 @@ pub(crate) async fn handle_message(
             debug!("Received broadcast Ok msg from {:?}", src);
             // Remember that the recipient received the broadcast message so that we do not
             // send it again.
-            let maybe_broadcast_msg = broadcast_message_store
-                .read()
-                .await
-                .get(&b.in_reply_to)
-                .copied();
+            let maybe_broadcast_msg = broadcast_message_store.write().await.remove(&b.in_reply_to);
             if let Some(broadcast_msg) = maybe_broadcast_msg {
                 let mut neighbour_broadcast_messages_lock =
                     neighbour_broadcast_messages.write().await;
