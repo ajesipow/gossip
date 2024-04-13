@@ -28,15 +28,15 @@ impl ExponentialBackOff {
     pub(crate) fn new(max_retry_attempts: u32) -> Self {
         Self {
             max_retry_attempts,
-            base_interval_ms: 500,
-            exponential_rate: 1.5,
+            base_interval_ms: 10,
+            exponential_rate: 4.0,
         }
     }
 }
 
 impl Default for ExponentialBackOff {
     fn default() -> Self {
-        Self::new(5)
+        Self::new(6)
     }
 }
 
