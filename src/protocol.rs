@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
 
@@ -65,14 +66,14 @@ pub(crate) struct ReadBody {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ReadOkBody {
-    pub messages: Vec<usize>,
+    pub messages: Vec<BroadcastMessage>,
     pub in_reply_to: MessageId,
     pub msg_id: MessageId,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct BroadcastBody {
-    pub message: usize,
+    pub message: BroadcastMessage,
     pub msg_id: MessageId,
 }
 

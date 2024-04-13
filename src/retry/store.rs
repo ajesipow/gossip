@@ -6,6 +6,7 @@ use chrono::Utc;
 
 use crate::pre_message::PreMessage;
 use crate::pre_message::PreMessageBody;
+use crate::primitives::BroadcastMessage;
 use crate::retry::policy::RetryDecision;
 use crate::retry::policy::RetryPolicy;
 use crate::retry::RetryMessage;
@@ -14,8 +15,7 @@ use crate::retry::RetryMessage;
 #[derive(Debug)]
 pub(crate) struct RetryStore<P> {
     retry_queue: BTreeMap<DateTime<Utc>, Vec<RetryMessage>>,
-    // TODO newtype for broadcast message ids
-    broadcast_messages: HashSet<(usize, String)>,
+    broadcast_messages: HashSet<(BroadcastMessage, String)>,
     policy: P,
 }
 
@@ -36,7 +36,7 @@ impl<P: RetryPolicy> RetryStore<P> {
         // TODO what if the msg already exists?
         if let PreMessageBody::Broadcast(body) = &msg.body {
             self.broadcast_messages
-                .insert((body.message, msg.dest.0.clone()));
+                .insert((body.message, msg.dest.as_ref().to_string()));
         }
         let retry_attempt = 0;
         let first_retry = Utc::now();
@@ -57,8 +57,8 @@ impl<P: RetryPolicy> RetryStore<P> {
 
     pub(crate) fn contains(
         &self,
-        broadcast_message: usize,
-        // TODO owned type
+        // TODO no owned type
+        broadcast_message: BroadcastMessage,
         neighbour: String,
     ) -> bool {
         self.broadcast_messages

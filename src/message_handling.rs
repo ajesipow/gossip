@@ -18,6 +18,7 @@ use crate::pre_message::PreMessage;
 use crate::pre_message::PreMessageBody;
 use crate::pre_message::ReadOkPreBody;
 use crate::pre_message::TopologyOkPreBody;
+use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageRecipient;
 use crate::protocol::Message;
 use crate::protocol::MessageBody;
@@ -26,14 +27,14 @@ use crate::protocol::MessageBody;
 #[instrument(skip(broadcast_messages, neighbour_broadcast_messages))]
 pub(crate) async fn handle_message(
     message: Message,
-    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
-    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+    broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
     broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
 ) -> Vec<PreMessage> {
     let src = message.src;
     match message.body {
         MessageBody::Echo(body) => vec![PreMessage::new(
-            MessageRecipient(src),
+            MessageRecipient::new(src),
             PreMessageBody::EchoOk(EchoOkPreBody {
                 echo: body.echo,
                 in_reply_to: body.msg_id,
@@ -46,7 +47,7 @@ pub(crate) async fn handle_message(
         MessageBody::Init(body) => {
             debug!("Received Init msg from {:?}", src);
             vec![PreMessage::new(
-                MessageRecipient(src),
+                MessageRecipient::new(src),
                 PreMessageBody::InitOk(InitOkPreBody {
                     in_reply_to: body.msg_id,
                 }),
@@ -83,7 +84,7 @@ pub(crate) async fn handle_message(
                 .filter_map(|(neighbour, messages)| {
                     if !messages.contains(&broadcast_message) {
                         // FIXME: avoid clone
-                        Some(MessageRecipient(neighbour.clone()))
+                        Some(MessageRecipient::new(neighbour.clone()))
                     } else {
                         None
                     }
@@ -92,7 +93,7 @@ pub(crate) async fn handle_message(
             drop(neighbour_broadcast_messages_lock);
 
             messages.push(PreMessage::new(
-                MessageRecipient(src),
+                MessageRecipient::new(src),
                 PreMessageBody::BroadcastOk(BroadcastOkPreBody {
                     in_reply_to: body.msg_id,
                 }),
@@ -130,7 +131,7 @@ pub(crate) async fn handle_message(
             debug!("Received Read msg from {:?}", src);
             let messages = broadcast_messages.read().await;
             vec![PreMessage::new(
-                MessageRecipient(src),
+                MessageRecipient::new(src),
                 PreMessageBody::ReadOk(ReadOkPreBody {
                     messages: messages.iter().copied().collect(),
                     in_reply_to: body.msg_id,
@@ -159,7 +160,7 @@ pub(crate) async fn handle_message(
             }
 
             vec![PreMessage::new(
-                MessageRecipient(src),
+                MessageRecipient::new(src),
                 PreMessageBody::TopologyOk(TopologyOkPreBody {
                     in_reply_to: body.msg_id,
                 }),

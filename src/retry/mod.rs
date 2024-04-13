@@ -17,6 +17,7 @@ use tracing::error;
 use crate::pre_message::BroadcastPreBody;
 use crate::pre_message::PreMessage;
 use crate::pre_message::PreMessageBody;
+use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageRecipient;
 use crate::retry::policy::ExponentialBackOff;
 use crate::retry::store::RetryStore;
@@ -35,16 +36,16 @@ pub(crate) struct RetryMessage {
 #[derive(Debug)]
 pub(crate) struct RetryHandler {
     msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
-    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
+    broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
     retry_store: RetryStore<ExponentialBackOff>,
 }
 
 impl RetryHandler {
     pub(crate) fn new(
         msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-        neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
-        broadcast_messages: Arc<RwLock<HashSet<usize>>>,
+        neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
+        broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
     ) -> Self {
         Self {
             msg_dispatch_queue_tx,
@@ -56,15 +57,14 @@ impl RetryHandler {
 
     pub(crate) async fn run(&mut self) {
         debug!("Running retry handler");
-        // Periodically check for message to dispatch for sending
         loop {
-            sleep(Duration::from_millis(5)).await;
+            sleep(Duration::from_millis(1)).await;
 
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
             let neighbour_broadcast_messages_lock = self.neighbour_broadcast_messages.read().await;
             let broadcast_messages_lock = self.broadcast_messages.read().await;
-            let new_unacknowledged_broadcast_messages: Vec<_> = neighbour_broadcast_messages_lock
+            let new_unacked_broadcast_messages: Vec<_> = neighbour_broadcast_messages_lock
                 .iter()
                 .flat_map(|(neighbour, acknowledged_messages)| {
                     broadcast_messages_lock
@@ -74,7 +74,7 @@ impl RetryHandler {
                         .map(|unacknowledged_message| {
                             PreMessage::new(
                                 // TODO avoid clone
-                                MessageRecipient(neighbour.clone()),
+                                MessageRecipient::new(neighbour.clone()),
                                 PreMessageBody::Broadcast(BroadcastPreBody {
                                     message: *unacknowledged_message,
                                 }),
@@ -85,7 +85,7 @@ impl RetryHandler {
             drop(neighbour_broadcast_messages_lock);
             drop(broadcast_messages_lock);
 
-            for msg in new_unacknowledged_broadcast_messages {
+            for msg in new_unacked_broadcast_messages {
                 self.retry_store.add(msg)
             }
 

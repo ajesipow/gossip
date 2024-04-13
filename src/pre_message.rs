@@ -1,3 +1,4 @@
+use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
 use crate::protocol::BroadcastBody;
@@ -51,7 +52,7 @@ pub(crate) struct InitOkPreBody {
 
 #[derive(Debug, Clone)]
 pub(crate) struct BroadcastPreBody {
-    pub message: usize,
+    pub message: BroadcastMessage,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +62,7 @@ pub(crate) struct BroadcastOkPreBody {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ReadOkPreBody {
-    pub messages: Vec<usize>,
+    pub messages: Vec<BroadcastMessage>,
     pub in_reply_to: MessageId,
 }
 

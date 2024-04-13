@@ -16,6 +16,7 @@ use crate::dispatch::MessageDispatcher;
 use crate::message_handling::handle_message;
 use crate::message_store::BroadcastMessageStore;
 use crate::pre_message::PreMessage;
+use crate::primitives::BroadcastMessage;
 use crate::protocol::MessageBody;
 use crate::retry::RetryHandler;
 use crate::transport::StdInTransport;
@@ -27,9 +28,9 @@ pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 pub(crate) struct Node {
     transport: StdInTransport,
     msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-    broadcast_messages: Arc<RwLock<HashSet<usize>>>,
+    broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
     // The broadcast messages we sent to or received from our neighbours
-    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<usize>>>>,
+    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
     broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
 }
 

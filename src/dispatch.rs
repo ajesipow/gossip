@@ -72,7 +72,7 @@ impl MessageDispatcher {
 
     fn next_message_id(&mut self) -> MessageId {
         self.message_counter += 1;
-        MessageId(self.message_counter)
+        MessageId::new(self.message_counter)
     }
 }
 
