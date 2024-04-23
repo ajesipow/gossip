@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use chrono::DateTime;
 use chrono::Utc;
+use itertools::Itertools;
+use tracing::debug;
+use tracing::error;
 
+use crate::node::NODE_ID;
 use crate::pre_message::PreMessage;
 use crate::pre_message::PreMessageBody;
 use crate::primitives::BroadcastMessage;
@@ -15,7 +20,7 @@ use crate::retry::RetryMessage;
 #[derive(Debug)]
 pub(crate) struct RetryStore<P> {
     retry_queue: BTreeMap<DateTime<Utc>, Vec<RetryMessage>>,
-    broadcast_messages: HashSet<(BroadcastMessage, String)>,
+    broadcast_messages: HashMap<PreMessage, RetryDecision>,
     policy: P,
 }
 
@@ -24,7 +29,7 @@ impl<P: RetryPolicy> RetryStore<P> {
     pub(crate) fn new(policy: P) -> Self {
         Self {
             retry_queue: Default::default(),
-            broadcast_messages: HashSet::with_capacity(1024),
+            broadcast_messages: HashMap::with_capacity(1024),
             policy,
         }
     }
@@ -33,14 +38,14 @@ impl<P: RetryPolicy> RetryStore<P> {
         &mut self,
         msg: PreMessage,
     ) {
-        // TODO what if the msg already exists?
-        if let PreMessageBody::Broadcast(body) = &msg.body {
-            self.broadcast_messages
-                .insert((body.message, msg.dest.as_ref().to_string()));
+        if self.broadcast_messages.contains_key(&msg) {
+            return;
         }
         let retry_attempt = 0;
         let first_retry = Utc::now();
-        match self.policy.should_retry(first_retry, retry_attempt) {
+        let decision = self.policy.should_retry(first_retry, retry_attempt);
+        self.broadcast_messages.insert(msg.clone(), decision);
+        match decision {
             RetryDecision::Retry { retry_after } => {
                 self.retry_queue
                     .entry(retry_after)
@@ -48,7 +53,8 @@ impl<P: RetryPolicy> RetryStore<P> {
                     .push(RetryMessage {
                         n_past_retries: retry_attempt,
                         first_retry,
-                        msg,
+                        // TODO avoid clone
+                        msg: msg.clone(),
                     });
             }
             RetryDecision::DoNotRetry => {}
@@ -57,43 +63,69 @@ impl<P: RetryPolicy> RetryStore<P> {
 
     pub(crate) fn contains(
         &self,
-        // TODO no owned type
-        broadcast_message: BroadcastMessage,
-        neighbour: String,
+        msg: &PreMessage,
     ) -> bool {
-        self.broadcast_messages
-            .contains(&(broadcast_message, neighbour))
+        self.broadcast_messages.contains_key(msg)
+    }
+
+    pub(crate) fn remove(
+        &mut self,
+        pre_msg: &PreMessage,
+    ) {
+        if let Some(decision) = self.broadcast_messages.get_mut(pre_msg) {
+            match decision {
+                RetryDecision::Retry { retry_after } => {
+                    self.retry_queue.remove(retry_after);
+                }
+                RetryDecision::DoNotRetry => {}
+            }
+            *decision = RetryDecision::DoNotRetry;
+        }
     }
 }
 
 impl<P: RetryPolicy> Iterator for RetryStore<P> {
     type Item = Vec<RetryMessage>;
 
+    /// Every consumed message will have its retry decision updated
+    /// automatically and is assumed to have been retried by the caller.
     fn next(&mut self) -> Option<Self::Item> {
-        let now = Utc::now();
-
-        let msgs = self.retry_queue.range(..now);
-        let all_messages: Vec<RetryMessage> = msgs.flat_map(|m| m.1).cloned().collect();
-        for msg in &all_messages {
-            let last_retry_attempts = msg.n_past_retries;
-            match self
-                .policy
-                .should_retry(msg.first_retry, last_retry_attempts)
-            {
-                RetryDecision::Retry { retry_after } => {
-                    self.retry_queue
-                        .entry(retry_after)
-                        .or_default()
-                        .push(RetryMessage {
-                            n_past_retries: last_retry_attempts + 1,
-                            first_retry: msg.first_retry,
+        let maybe_msg = self.retry_queue.pop_first();
+        match maybe_msg {
+            None => None,
+            Some((retry_after, msgs)) => {
+                if retry_after <= Utc::now() {
+                    for msg in &msgs {
+                        let last_retry_attempts = msg.n_past_retries;
+                        let retry_decision = self
+                            .policy
+                            .should_retry(msg.first_retry, last_retry_attempts);
+                        self.broadcast_messages.insert(
                             // TODO avoid clone
-                            msg: msg.msg.clone(),
-                        });
+                            msg.msg.clone(),
+                            retry_decision,
+                        );
+                        match retry_decision {
+                            RetryDecision::Retry { retry_after } => {
+                                self.retry_queue.entry(retry_after).or_default().push(
+                                    RetryMessage {
+                                        n_past_retries: last_retry_attempts + 1,
+                                        first_retry: msg.first_retry,
+                                        // TODO avoid clone
+                                        msg: msg.msg.clone(),
+                                    },
+                                );
+                            }
+                            RetryDecision::DoNotRetry => {}
+                        }
+                    }
+                    Some(msgs)
+                } else {
+                    // Too early to retry, put message back
+                    self.retry_queue.insert(retry_after, msgs);
+                    None
                 }
-                RetryDecision::DoNotRetry => {}
             }
         }
-        Some(all_messages)
     }
 }

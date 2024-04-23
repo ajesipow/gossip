@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::anyhow;
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::RwLock;
+use tokio::time::sleep;
 use tracing::debug;
 
 use crate::message_store::BroadcastMessageStore;
@@ -78,10 +80,7 @@ impl MessageDispatcher {
 
 fn serialize_and_send(msg: &Message) -> Result<()> {
     if let Ok(serialized_response) = serde_json::to_string(&msg) {
-        debug!(
-            "Sending message {} from {:?} to {:?}",
-            serialized_response, msg.src, msg.dest
-        );
+        debug!("Sending message {}", serialized_response);
         // Send to stdout
         println!("{serialized_response}");
         Ok(())

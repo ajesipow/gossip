@@ -1,5 +1,6 @@
 use anyhow::Result;
 use node::Node;
+use tokio::runtime;
 use tracing::metadata::LevelFilter;
 
 mod dispatch;
@@ -21,8 +22,13 @@ async fn main() -> Result<()> {
         .with_max_level(LevelFilter::DEBUG)
         .with_writer(non_blocking)
         .init();
-
+    // let rt = runtime::Builder::new_multi_thread()
+    //     .worker_threads(4)
+    //     .build()
+    //     .unwrap();
+    // rt.block_on(async {
     let mut node = Node::new().await;
-    node.run().await?;
-    Ok(())
+    node.run().await
+    //     Ok(())
+    // })
 }

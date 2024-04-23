@@ -24,7 +24,7 @@ use crate::protocol::Message;
 use crate::protocol::MessageBody;
 
 /// Handle incoming messages and return an appropriate response.
-#[instrument(skip(broadcast_messages, neighbour_broadcast_messages))]
+#[instrument()]
 pub(crate) async fn handle_message(
     message: Message,
     broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
@@ -58,7 +58,7 @@ pub(crate) async fn handle_message(
             Default::default()
         }
         MessageBody::Broadcast(body) => {
-            debug!("Received Broadcast msg from {:?}", src);
+            debug!("Received Broadcast msg {:?} from {:?}", body.message, src);
             let mut messages = vec![];
 
             let broadcast_message = body.message;
@@ -71,9 +71,12 @@ pub(crate) async fn handle_message(
             // We're not just adding any `src` as key to this map because we're also
             // receiving these messages from clients which we don't want to
             let mut neighbour_broadcast_messages_lock = neighbour_broadcast_messages.write().await;
-            neighbour_broadcast_messages_lock
-                .get_mut(&src)
-                .map(|msgs| msgs.insert(broadcast_message));
+            match neighbour_broadcast_messages_lock.get_mut(&src) {
+                Some(msgs) => {
+                    msgs.insert(broadcast_message);
+                }
+                None => warn!("Could not get neighbour for broadcast msg: {:?}", &src),
+            }
             drop(neighbour_broadcast_messages_lock);
 
             // Send the same broadcast message to other nodes that we think have not seen it
@@ -111,16 +114,26 @@ pub(crate) async fn handle_message(
             messages
         }
         MessageBody::BroadcastOk(b) => {
-            debug!("Received broadcast Ok msg from {:?}", src);
+            debug!(
+                "Received broadcast Ok msg from {:?} in reply to {:?}",
+                src, &b.in_reply_to
+            );
             // Remember that the recipient received the broadcast message so that we do not
             // send it again.
             let maybe_broadcast_msg = broadcast_message_store.write().await.remove(&b.in_reply_to);
             if let Some(broadcast_msg) = maybe_broadcast_msg {
                 let mut neighbour_broadcast_messages_lock =
                     neighbour_broadcast_messages.write().await;
-                neighbour_broadcast_messages_lock
-                    .get_mut(&src)
-                    .map(|msgs| msgs.insert(broadcast_msg));
+                match neighbour_broadcast_messages_lock.get_mut(&src) {
+                    Some(msgs) => {
+                        msgs.insert(broadcast_msg);
+                        debug!(
+                            "Bcas Ok msg {:?} from {:?} to {:?}",
+                            broadcast_msg, src, message.dest
+                        );
+                    }
+                    None => warn!("Could not get neighbour for broadcast OK msg: {src:?}"),
+                }
                 drop(neighbour_broadcast_messages_lock);
             } else {
                 warn!("Could not find message ID in broadcast store");

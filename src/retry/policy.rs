@@ -3,6 +3,7 @@ use std::time::Duration;
 use chrono::DateTime;
 use chrono::Utc;
 
+#[derive(Debug, Copy, Clone)]
 pub(crate) enum RetryDecision {
     Retry { retry_after: DateTime<Utc> },
     DoNotRetry,
@@ -28,15 +29,15 @@ impl ExponentialBackOff {
     pub(crate) fn new(max_retry_attempts: u32) -> Self {
         Self {
             max_retry_attempts,
-            base_interval_ms: 10,
-            exponential_rate: 4.0,
+            base_interval_ms: 1,
+            exponential_rate: 3.0,
         }
     }
 }
 
 impl Default for ExponentialBackOff {
     fn default() -> Self {
-        Self::new(6)
+        Self::new(9)
     }
 }
 

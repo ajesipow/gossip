@@ -14,7 +14,7 @@ use crate::protocol::TopologyOkBody;
 /// properties of a full [`Message`] that internal actors should not have to
 /// care about. Only messages that can be sent from a node can be constructed as
 /// a [`PreMessage`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct PreMessage {
     pub dest: MessageRecipient,
     pub body: PreMessageBody,
@@ -27,9 +27,21 @@ impl PreMessage {
     ) -> Self {
         Self { dest, body }
     }
+
+    pub fn broadcast(
+        dest: MessageRecipient,
+        broadcast_message: BroadcastMessage,
+    ) -> Self {
+        Self::new(
+            dest,
+            PreMessageBody::Broadcast(BroadcastPreBody {
+                message: broadcast_message,
+            }),
+        )
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum PreMessageBody {
     EchoOk(EchoOkPreBody),
     InitOk(InitOkPreBody),
@@ -39,34 +51,34 @@ pub(crate) enum PreMessageBody {
     TopologyOk(TopologyOkPreBody),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EchoOkPreBody {
     pub echo: String,
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct InitOkPreBody {
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BroadcastPreBody {
     pub message: BroadcastMessage,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BroadcastOkPreBody {
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct ReadOkPreBody {
     pub messages: Vec<BroadcastMessage>,
     pub in_reply_to: MessageId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TopologyOkPreBody {
     pub in_reply_to: MessageId,
 }
