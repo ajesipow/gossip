@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::debug;
 use tracing::error;
 use tracing::instrument;
 use tracing::warn;
@@ -40,12 +39,8 @@ pub(crate) async fn handle_message(
                 in_reply_to: body.msg_id,
             }),
         )],
-        MessageBody::EchoOk(_) => {
-            debug!("Received Echo Ok msg from {:?}", src);
-            Default::default()
-        }
+        MessageBody::EchoOk(_) => Default::default(),
         MessageBody::Init(body) => {
-            debug!("Received Init msg from {:?}", src);
             vec![PreMessage::new(
                 MessageRecipient::new(src),
                 PreMessageBody::InitOk(InitOkPreBody {
@@ -53,12 +48,8 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::InitOk(_) => {
-            debug!("Received init Ok msg from {:?}", src);
-            Default::default()
-        }
+        MessageBody::InitOk(_) => Default::default(),
         MessageBody::Broadcast(body) => {
-            debug!("Received Broadcast msg {:?} from {:?}", body.message, src);
             let mut messages = vec![];
 
             let broadcast_message = body.message;
@@ -95,6 +86,7 @@ pub(crate) async fn handle_message(
                 .collect();
             drop(neighbour_broadcast_messages_lock);
 
+            // TODO use PreMessage::broadcase
             messages.push(PreMessage::new(
                 MessageRecipient::new(src),
                 PreMessageBody::BroadcastOk(BroadcastOkPreBody {
@@ -102,6 +94,7 @@ pub(crate) async fn handle_message(
                 }),
             ));
 
+            // TODO use PreMessage::broadcase
             messages.extend(recipients.into_iter().map(|recipient| {
                 PreMessage::new(
                     recipient,
@@ -114,10 +107,6 @@ pub(crate) async fn handle_message(
             messages
         }
         MessageBody::BroadcastOk(b) => {
-            debug!(
-                "Received broadcast Ok msg from {:?} in reply to {:?}",
-                src, &b.in_reply_to
-            );
             // Remember that the recipient received the broadcast message so that we do not
             // send it again.
             let maybe_broadcast_msg = broadcast_message_store.write().await.remove(&b.in_reply_to);
@@ -127,10 +116,6 @@ pub(crate) async fn handle_message(
                 match neighbour_broadcast_messages_lock.get_mut(&src) {
                     Some(msgs) => {
                         msgs.insert(broadcast_msg);
-                        debug!(
-                            "Bcas Ok msg {:?} from {:?} to {:?}",
-                            broadcast_msg, src, message.dest
-                        );
                     }
                     None => warn!("Could not get neighbour for broadcast OK msg: {src:?}"),
                 }
@@ -141,7 +126,6 @@ pub(crate) async fn handle_message(
             Default::default()
         }
         MessageBody::Read(body) => {
-            debug!("Received Read msg from {:?}", src);
             let messages = broadcast_messages.read().await;
             vec![PreMessage::new(
                 MessageRecipient::new(src),
@@ -151,12 +135,8 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::ReadOk(_) => {
-            debug!("Received read Ok msg from {:?}", src);
-            Default::default()
-        }
+        MessageBody::ReadOk(_) => Default::default(),
         MessageBody::Topology(mut body) => {
-            debug!("Received Topology msg {:?} from {:?}", body, src);
             if let Some(node_id) = NODE_ID.get() {
                 if let Some(neighbours) = body.topology.remove(node_id) {
                     let mut neighbour_broadcast_messages_lock =
@@ -179,9 +159,6 @@ pub(crate) async fn handle_message(
                 }),
             )]
         }
-        MessageBody::TopologyOk(_) => {
-            debug!("Received topology Ok msg from {:?}", src);
-            Default::default()
-        }
+        MessageBody::TopologyOk(_) => Default::default(),
     }
 }

@@ -17,6 +17,13 @@ impl MessageId {
 #[serde(transparent)]
 pub(crate) struct BroadcastMessage(usize);
 
+#[cfg(test)]
+impl BroadcastMessage {
+    pub(crate) fn new(msg: usize) -> Self {
+        Self(msg)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(transparent)]
 pub(crate) struct MessageRecipient(String);

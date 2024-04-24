@@ -1,17 +1,10 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use chrono::DateTime;
 use chrono::Utc;
-use itertools::Itertools;
-use tracing::debug;
-use tracing::error;
 
-use crate::node::NODE_ID;
 use crate::pre_message::PreMessage;
-use crate::pre_message::PreMessageBody;
-use crate::primitives::BroadcastMessage;
 use crate::retry::policy::RetryDecision;
 use crate::retry::policy::RetryPolicy;
 use crate::retry::RetryMessage;
@@ -79,6 +72,8 @@ impl<P: RetryPolicy> RetryStore<P> {
                 }
                 RetryDecision::DoNotRetry => {}
             }
+            // TODO this would grow indefinitely over time
+            // Remember the key to not retry in the future
             *decision = RetryDecision::DoNotRetry;
         }
     }
