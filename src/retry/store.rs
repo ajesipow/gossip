@@ -124,3 +124,31 @@ impl<P: RetryPolicy> Iterator for RetryStore<P> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::primitives::BroadcastMessage;
+    use crate::primitives::MessageRecipient;
+    use crate::retry::policy::ExponentialBackOff;
+
+    #[test]
+    fn adding_messages_works() {
+        let mut store = RetryStore::new(ExponentialBackOff::default());
+
+        let msg_1 = PreMessage::broadcast(
+            MessageRecipient::new("n1".to_string()),
+            BroadcastMessage::new(1),
+        );
+        let msg_2 = PreMessage::broadcast(
+            MessageRecipient::new("n2".to_string()),
+            BroadcastMessage::new(2),
+        );
+
+        store.add(msg_1.clone());
+        store.add(msg_2.clone());
+
+        assert!(store.contains(&msg_1));
+        assert!(store.contains(&msg_2));
+    }
+}
