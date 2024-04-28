@@ -34,7 +34,7 @@ impl<P: RetryPolicy> RetryStore<P> {
         if self.broadcast_messages.contains_key(&msg) {
             return;
         }
-        let retry_attempt = 0;
+        let retry_attempt = 1;
         let first_retry = Utc::now();
         let decision = self.policy.should_retry(first_retry, retry_attempt);
         self.broadcast_messages.insert(msg.clone(), decision);
@@ -91,20 +91,21 @@ impl<P: RetryPolicy> Iterator for RetryStore<P> {
             Some((retry_after, msgs)) => {
                 if retry_after <= Utc::now() {
                     for msg in &msgs {
-                        let last_retry_attempts = msg.n_past_retries;
-                        let retry_decision = self
-                            .policy
-                            .should_retry(msg.first_retry, last_retry_attempts);
+                        let retry_attempts = msg.n_past_retries + 1;
+                        let retry_decision =
+                            self.policy.should_retry(msg.first_retry, retry_attempts);
                         self.broadcast_messages.insert(
                             // TODO avoid clone
                             msg.msg.clone(),
                             retry_decision,
                         );
                         match retry_decision {
-                            RetryDecision::Retry { retry_after } => {
-                                self.retry_queue.entry(retry_after).or_default().push(
+                            RetryDecision::Retry {
+                                retry_after: new_retry_after,
+                            } => {
+                                self.retry_queue.entry(new_retry_after).or_default().push(
                                     RetryMessage {
-                                        n_past_retries: last_retry_attempts + 1,
+                                        n_past_retries: retry_attempts,
                                         first_retry: msg.first_retry,
                                         // TODO avoid clone
                                         msg: msg.msg.clone(),
@@ -127,6 +128,11 @@ impl<P: RetryPolicy> Iterator for RetryStore<P> {
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use itertools::Itertools;
+
     use super::*;
     use crate::primitives::BroadcastMessage;
     use crate::primitives::MessageRecipient;
@@ -150,5 +156,13 @@ mod tests {
 
         assert!(store.contains(&msg_1));
         assert!(store.contains(&msg_2));
+
+        sleep(Duration::from_millis(10));
+
+        let msg = store.next().unwrap();
+        assert_eq!(msg.into_iter().map(|m| m.msg).collect_vec(), vec![msg_1]);
+
+        let msg = store.next().unwrap();
+        assert_eq!(msg.into_iter().map(|m| m.msg).collect_vec(), vec![msg_2]);
     }
 }

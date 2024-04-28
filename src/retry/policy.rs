@@ -21,7 +21,7 @@ pub(crate) trait RetryPolicy {
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct ExponentialBackOff {
     max_retry_attempts: u32,
-    base_interval_ms: u32,
+    base_interval_ms: f32,
     exponential_rate: f32,
 }
 
@@ -29,15 +29,15 @@ impl ExponentialBackOff {
     pub(crate) fn new(max_retry_attempts: u32) -> Self {
         Self {
             max_retry_attempts,
-            base_interval_ms: 1,
-            exponential_rate: 3.0,
+            base_interval_ms: 5.0,
+            exponential_rate: 5.0,
         }
     }
 }
 
 impl Default for ExponentialBackOff {
     fn default() -> Self {
-        Self::new(9)
+        Self::new(5)
     }
 }
 
@@ -51,9 +51,9 @@ impl RetryPolicy for ExponentialBackOff {
             return RetryDecision::DoNotRetry;
         }
         let next_retry_ms =
-            self.base_interval_ms as f32 * self.exponential_rate.powi(n_past_retries as i32);
-        RetryDecision::Retry {
-            retry_after: first_dispatch_time + Duration::from_millis(next_retry_ms as u64),
-        }
+            self.base_interval_ms * self.exponential_rate.powi(n_past_retries as i32);
+        let retry_after =
+            first_dispatch_time + Duration::from_micros((next_retry_ms * 100.0) as u64);
+        RetryDecision::Retry { retry_after }
     }
 }
