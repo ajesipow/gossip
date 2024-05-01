@@ -1,22 +1,20 @@
 mod policy;
 mod store;
 
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
-use tokio::sync::mpsc::Sender;
+use thingbuf::mpsc::Sender;
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::debug;
 use tracing::error;
 
+use crate::message_store::BroadcastMessageStore;
 use crate::pre_message::PreMessage;
-use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageRecipient;
 use crate::retry::policy::ExponentialBackOff;
 use crate::retry::store::RetryStore;
@@ -35,64 +33,64 @@ pub(crate) struct RetryMessage {
 #[derive(Debug)]
 pub(crate) struct RetryHandler {
     msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-    neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
-    broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
+    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
     retry_store: RetryStore<ExponentialBackOff>,
 }
 
 impl RetryHandler {
     pub(crate) fn new(
         msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-        neighbour_broadcast_messages: Arc<RwLock<HashMap<String, HashSet<BroadcastMessage>>>>,
-        broadcast_messages: Arc<RwLock<HashSet<BroadcastMessage>>>,
+        broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
     ) -> Self {
         Self {
             msg_dispatch_queue_tx,
-            neighbour_broadcast_messages,
-            broadcast_messages,
+            broadcast_message_store,
             retry_store: RetryStore::new(ExponentialBackOff::default()),
         }
     }
 
     pub(crate) async fn run(&mut self) {
         debug!("Running retry handler");
-        let mut interval = interval(Duration::from_millis(1));
+        let mut interval = interval(Duration::from_micros(100));
         loop {
             interval.tick().await;
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
-            // TODO wrapper struct for bdacst msgs
-            let neighbour_broadcast_messages_lock = self.neighbour_broadcast_messages.read().await;
-            let broadcast_messages_lock = self.broadcast_messages.read().await;
-            let new_unacked_broadcast_messages: Vec<_> = neighbour_broadcast_messages_lock
-                .iter()
-                .flat_map(|(neighbour, acknowledged_messages)| {
-                    broadcast_messages_lock
-                        .difference(acknowledged_messages)
-                        .map(|unacknowledged_message| {
+
+            let mut lock = self.broadcast_message_store.write().await;
+            let unacked_broadcast_messages_by_nodes = lock.unacked_nodes_all_msgs();
+            let recently_acked_msgs_by_nodes = lock.recent_peer_inserts();
+            drop(lock);
+
+            let new_unacked_broadcast_messages: Vec<_> = unacked_broadcast_messages_by_nodes
+                .into_iter()
+                .flat_map(|(neighbour, unacked_msgs)| {
+                    unacked_msgs
+                        .into_iter()
+                        .map(move |unacked_msg| {
                             PreMessage::broadcast(
-                                // TODO avoid clone
+                                // TODO zip repeat
                                 MessageRecipient::new(neighbour.to_string()),
-                                *unacknowledged_message,
+                                unacked_msg,
                             )
                         })
                         .filter(|msg| !self.retry_store.contains(msg))
                 })
                 .collect();
             // Remove all received msgs from the retry store.
-            let msgs_to_remove = neighbour_broadcast_messages_lock
-                .iter()
+            let msgs_to_remove = recently_acked_msgs_by_nodes
+                .into_iter()
                 .flat_map(|(neighbour, bdcast_msgs)| {
-                    bdcast_msgs.iter().map(|bdcast_msg| {
+                    // TODO zip repeat
+                    bdcast_msgs.into_iter().map(move |bdcast_msg| {
                         PreMessage::broadcast(
                             MessageRecipient::new(neighbour.to_string()),
-                            *bdcast_msg,
+                            bdcast_msg,
                         )
                     })
                 })
                 .collect_vec();
-            drop(neighbour_broadcast_messages_lock);
-            drop(broadcast_messages_lock);
+
             for msg in new_unacked_broadcast_messages {
                 self.retry_store.add(msg)
             }

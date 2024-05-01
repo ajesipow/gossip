@@ -1,8 +1,10 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Result;
-use tokio::sync::mpsc::Receiver;
+use serde::Serialize;
+use thingbuf::mpsc::Receiver;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -63,7 +65,7 @@ impl MessageDispatcher {
                 // contains the original message ID).
                 let mut msg_store_lock = self.broadcast_message_store.write().await;
                 for (msg_id, broadcast_msg) in broadcast_msgs {
-                    msg_store_lock.insert(msg_id, broadcast_msg);
+                    msg_store_lock.register_msg_id(msg_id, broadcast_msg);
                 }
                 drop(msg_store_lock);
             }
@@ -76,7 +78,11 @@ impl MessageDispatcher {
     }
 }
 
-fn serialize_and_send(msg: &Message) -> Result<()> {
+fn serialize_and_send<S>(msg: S) -> Result<()>
+where
+    S: Serialize,
+    S: Debug,
+{
     if let Ok(serialized_response) = serde_json::to_string(&msg) {
         debug!("Sending message {}", serialized_response);
         // Send to stdout
