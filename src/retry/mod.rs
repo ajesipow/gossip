@@ -51,7 +51,7 @@ impl RetryHandler {
 
     pub(crate) async fn run(&mut self) {
         debug!("Running retry handler");
-        let mut interval = interval(Duration::from_micros(100));
+        let mut interval = interval(Duration::from_millis(5));
         loop {
             interval.tick().await;
             // Send the same broadcast message to other nodes that we think have not seen it

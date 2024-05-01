@@ -53,7 +53,7 @@ impl Node {
 
         // FIXME AJES: shutdown gracefully
         // Using a vec to batch-send messages
-        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<Vec<PreMessage>>(256);
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<Vec<PreMessage>>(8);
 
         let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
 

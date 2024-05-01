@@ -147,10 +147,7 @@ impl BroadcastMessageStore {
             .broadcast_msg_by_msg_id
             .get(msg_id)
             .ok_or_else(|| anyhow!("unknown message id"))?;
-        self.recent_peer_broadcast_msgs
-            .entry(peer_node)
-            .or_default()
-            .insert(*bdcast_msg);
+        self.insert_for_peer_if_exists(&peer_node, *bdcast_msg);
         Ok(())
     }
 
@@ -164,5 +161,143 @@ impl BroadcastMessageStore {
         broadcast_msg: BroadcastMessage,
     ) {
         self.broadcast_msg_by_msg_id.insert(msg_id, broadcast_msg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_inserting_and_getting_broadcast_messages_for_own_node_works() {
+        let mut store = BroadcastMessageStore::new();
+
+        let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
+        for msg in &msgs {
+            store.insert(*msg);
+        }
+
+        let stored_msgs: HashSet<_> = store.msgs().into_iter().collect();
+        assert_eq!(stored_msgs, msgs);
+    }
+
+    #[test]
+    fn test_registering_and_retrieving_broadcast_msg_by_msg_id() {
+        let mut store = BroadcastMessageStore::new();
+        let broadcast_msg = BroadcastMessage::new(1);
+        let msg_id = MessageId::new(0);
+        let peer = "n1".to_string();
+
+        store.register_peer(peer.clone());
+        store.register_msg_id(msg_id, broadcast_msg);
+        assert!(store
+            .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id)
+            .is_ok());
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg]))])
+        );
+    }
+
+    #[test]
+    fn test_registering_and_retrieving_broadcast_msg_by_msg_id_does_not_insert_for_unregistered_peer(
+    ) {
+        let mut store = BroadcastMessageStore::new();
+        let broadcast_msg = BroadcastMessage::new(1);
+        let msg_id = MessageId::new(0);
+        let peer = "n1".to_string();
+
+        store.register_msg_id(msg_id, broadcast_msg);
+        assert!(store
+            .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id)
+            .is_ok());
+        assert_eq!(store.recent_peer_inserts(), HashMap::new());
+    }
+
+    #[test]
+    fn test_insert_for_peer_if_exists_works() {
+        let mut store = BroadcastMessageStore::new();
+        let broadcast_msg = BroadcastMessage::new(1);
+        let peer = "n1".to_string();
+
+        store.register_peer(peer.clone());
+        store.insert_for_peer_if_exists(&peer, broadcast_msg);
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg]))])
+        );
+    }
+
+    #[test]
+    fn test_insert_for_peer_if_exists_does_not_insert_if_peer_not_registered() {
+        let mut store = BroadcastMessageStore::new();
+        let broadcast_msg = BroadcastMessage::new(1);
+        let peer = "n1".to_string();
+
+        store.insert_for_peer_if_exists(&peer, broadcast_msg);
+        assert_eq!(store.recent_peer_inserts(), HashMap::new());
+    }
+
+    #[test]
+    fn test_insert_does_not_leek_to_peers() {
+        let mut store = BroadcastMessageStore::new();
+
+        let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
+        for msg in &msgs {
+            store.insert(*msg);
+        }
+        assert_eq!(store.recent_peer_inserts(), HashMap::new());
+    }
+
+    #[test]
+    fn test_recent_peer_inserts_works() {
+        let mut store = BroadcastMessageStore::new();
+        let peer = "n1".to_string();
+        store.register_peer(peer.clone());
+        let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
+        for msg in &msgs {
+            store.insert_for_peer_if_exists(&peer, *msg);
+        }
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, msgs)])
+        );
+        assert_eq!(store.recent_peer_inserts(), HashMap::new());
+    }
+
+    #[test]
+    fn test_unacked_nodes_works() {
+        let mut store = BroadcastMessageStore::new();
+        let peer_1 = "n1".to_string();
+        let peer_2 = "n2".to_string();
+        let peer_3 = "n3".to_string();
+        store.register_peer(peer_1.clone());
+        store.register_peer(peer_2.clone());
+        store.register_peer(peer_3.clone());
+
+        let msg_1 = BroadcastMessage::new(1);
+        let msg_2 = BroadcastMessage::new(2);
+        store.insert(msg_1);
+        store.insert(msg_2);
+        store.insert_for_peer_if_exists(&peer_1, msg_1);
+        store.insert_for_peer_if_exists(&peer_3, msg_1);
+        store.insert_for_peer_if_exists(&peer_3, msg_2);
+
+        assert_eq!(store.unacked_nodes(&msg_1), vec![peer_2.clone()]);
+        assert_eq!(
+            store
+                .unacked_nodes(&msg_2)
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from_iter([peer_1.clone(), peer_2.clone()])
+        );
+        assert_eq!(
+            store.unacked_nodes_all_msgs(),
+            HashMap::from_iter([
+                (peer_1, HashSet::from_iter([msg_2])),
+                (peer_2, HashSet::from_iter([msg_1, msg_2])),
+                (peer_3, HashSet::new())
+            ])
+        );
     }
 }
