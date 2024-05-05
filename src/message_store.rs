@@ -1,11 +1,11 @@
 use std::cmp::max;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem;
 
 use anyhow::anyhow;
 use anyhow::Result;
-use itertools::Itertools;
 
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
@@ -53,20 +53,37 @@ impl BroadcastMessageStore {
     pub(crate) fn unacked_nodes(
         &self,
         broadcast_message: &BroadcastMessage,
-    ) -> Vec<String> {
-        self.peer_broadcast_msgs
+    ) -> HashSet<&String> {
+        /// Helper struct for keeping track of peers to retain and remove below
+        struct PeerRecords<'a> {
+            keep: HashSet<&'a String>,
+            remove: HashSet<&'a String>,
+        }
+
+        impl<'a> PeerRecords<'a> {
+            fn new() -> Self {
+                Self {
+                    keep: HashSet::new(),
+                    remove: HashSet::new(),
+                }
+            }
+        }
+
+        let records = self
+            .peer_broadcast_msgs
             .iter()
             .chain(self.recent_peer_broadcast_msgs.iter())
-            .filter_map(|(peer, msgs)| {
+            .fold(PeerRecords::new(), |mut acc, (peer, msgs)| {
                 if !msgs.contains(broadcast_message) {
-                    Some(peer)
+                    acc.keep.insert(peer);
                 } else {
-                    None
+                    // Since we chain the two hashmaps we don't want to count the peer if the msg is
+                    // contained in just one of the two maps.
+                    acc.remove.insert(peer);
                 }
-            })
-            .unique()
-            .cloned()
-            .collect()
+                acc
+            });
+        records.keep.difference(&records.remove).copied().collect()
     }
 
     /// Gets all [BroadcastMessage]s this node is aware of that have not yet
@@ -82,9 +99,20 @@ impl BroadcastMessageStore {
             .fold(
                 HashMap::<String, HashSet<BroadcastMessage>>::with_capacity(n_peers),
                 |mut acc, (peer, acked_msgs)| {
-                    acc.entry(peer.clone())
-                        .or_default()
-                        .extend(self.node_broadcast_msgs.difference(acked_msgs));
+                    let diff = self
+                        .node_broadcast_msgs
+                        .difference(acked_msgs)
+                        .copied()
+                        .collect();
+                    match acc.entry(peer.clone()) {
+                        Entry::Occupied(mut v) => {
+                            let m = v.get_mut();
+                            *m = m.intersection(&diff).copied().collect();
+                        }
+                        Entry::Vacant(v) => {
+                            v.insert(diff);
+                        }
+                    }
                     acc
                 },
             )
@@ -95,6 +123,11 @@ impl BroadcastMessageStore {
     pub(crate) fn recent_peer_inserts(&mut self) -> HashMap<String, HashSet<BroadcastMessage>> {
         let recents = mem::take(&mut self.recent_peer_broadcast_msgs);
         for (peer, recent_msgs) in &recents {
+            // Insert peers back into recent map otherwise inserting will not work
+            self.recent_peer_broadcast_msgs
+                .entry(peer.clone())
+                .or_default();
+
             if let Some(msgs) = self.peer_broadcast_msgs.get_mut(peer) {
                 msgs.extend(recent_msgs);
             } else {
@@ -124,9 +157,12 @@ impl BroadcastMessageStore {
         &mut self,
         peer_node: &str,
         broadcast_msg: BroadcastMessage,
-    ) {
+    ) -> Result<()> {
         if let Some(msgs) = self.recent_peer_broadcast_msgs.get_mut(peer_node) {
             msgs.insert(broadcast_msg);
+            Ok(())
+        } else {
+            Err(anyhow!("Did not find peer {peer_node}"))
         }
     }
 
@@ -147,8 +183,7 @@ impl BroadcastMessageStore {
             .broadcast_msg_by_msg_id
             .get(msg_id)
             .ok_or_else(|| anyhow!("unknown message id"))?;
-        self.insert_for_peer_if_exists(&peer_node, *bdcast_msg);
-        Ok(())
+        self.insert_for_peer_if_exists(&peer_node, *bdcast_msg)
     }
 
     /// Registers a [MessageId] used to send a specific [BroadcastMessage].
@@ -184,18 +219,29 @@ mod tests {
     #[test]
     fn test_registering_and_retrieving_broadcast_msg_by_msg_id() {
         let mut store = BroadcastMessageStore::new();
-        let broadcast_msg = BroadcastMessage::new(1);
-        let msg_id = MessageId::new(0);
+        let broadcast_msg_1 = BroadcastMessage::new(1);
+        let broadcast_msg_2 = BroadcastMessage::new(2);
+        let msg_id_1 = MessageId::new(0);
+        let msg_id_2 = MessageId::new(1);
         let peer = "n1".to_string();
 
         store.register_peer(peer.clone());
-        store.register_msg_id(msg_id, broadcast_msg);
+        store.register_msg_id(msg_id_1, broadcast_msg_1);
         assert!(store
-            .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id)
+            .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id_1)
             .is_ok());
         assert_eq!(
             store.recent_peer_inserts(),
-            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg]))])
+            HashMap::from_iter([(peer.clone(), HashSet::from_iter([broadcast_msg_1]))])
+        );
+
+        store.register_msg_id(msg_id_2, broadcast_msg_2);
+        assert!(store
+            .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id_2)
+            .is_ok());
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg_2]))])
         );
     }
 
@@ -210,21 +256,32 @@ mod tests {
         store.register_msg_id(msg_id, broadcast_msg);
         assert!(store
             .insert_for_peer_by_msg_id_if_exists(peer.clone(), &msg_id)
-            .is_ok());
+            .is_err());
         assert_eq!(store.recent_peer_inserts(), HashMap::new());
     }
 
     #[test]
     fn test_insert_for_peer_if_exists_works() {
         let mut store = BroadcastMessageStore::new();
-        let broadcast_msg = BroadcastMessage::new(1);
+        let broadcast_msg_1 = BroadcastMessage::new(1);
+        let broadcast_msg_2 = BroadcastMessage::new(2);
         let peer = "n1".to_string();
 
         store.register_peer(peer.clone());
-        store.insert_for_peer_if_exists(&peer, broadcast_msg);
+        assert!(store
+            .insert_for_peer_if_exists(&peer, broadcast_msg_1)
+            .is_ok());
         assert_eq!(
             store.recent_peer_inserts(),
-            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg]))])
+            HashMap::from_iter([(peer.clone(), HashSet::from_iter([broadcast_msg_1]))])
+        );
+
+        assert!(store
+            .insert_for_peer_if_exists(&peer, broadcast_msg_2)
+            .is_ok());
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, HashSet::from_iter([broadcast_msg_2]))])
         );
     }
 
@@ -234,7 +291,9 @@ mod tests {
         let broadcast_msg = BroadcastMessage::new(1);
         let peer = "n1".to_string();
 
-        store.insert_for_peer_if_exists(&peer, broadcast_msg);
+        assert!(store
+            .insert_for_peer_if_exists(&peer, broadcast_msg)
+            .is_err());
         assert_eq!(store.recent_peer_inserts(), HashMap::new());
     }
 
@@ -256,13 +315,16 @@ mod tests {
         store.register_peer(peer.clone());
         let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
         for msg in &msgs {
-            store.insert_for_peer_if_exists(&peer, *msg);
+            assert!(store.insert_for_peer_if_exists(&peer, *msg).is_ok());
         }
         assert_eq!(
             store.recent_peer_inserts(),
-            HashMap::from_iter([(peer, msgs)])
+            HashMap::from_iter([(peer.clone(), msgs)])
         );
-        assert_eq!(store.recent_peer_inserts(), HashMap::new());
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([(peer, HashSet::new())])
+        );
     }
 
     #[test]
@@ -275,28 +337,57 @@ mod tests {
         store.register_peer(peer_2.clone());
         store.register_peer(peer_3.clone());
 
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([
+                (peer_1.clone(), HashSet::new()),
+                (peer_2.clone(), HashSet::new()),
+                (peer_3.clone(), HashSet::new())
+            ])
+        );
+
         let msg_1 = BroadcastMessage::new(1);
         let msg_2 = BroadcastMessage::new(2);
         store.insert(msg_1);
         store.insert(msg_2);
-        store.insert_for_peer_if_exists(&peer_1, msg_1);
-        store.insert_for_peer_if_exists(&peer_3, msg_1);
-        store.insert_for_peer_if_exists(&peer_3, msg_2);
+        let _ = store.insert_for_peer_if_exists(&peer_1, msg_1);
+        let _ = store.insert_for_peer_if_exists(&peer_3, msg_1);
+        let _ = store.insert_for_peer_if_exists(&peer_3, msg_2);
 
-        assert_eq!(store.unacked_nodes(&msg_1), vec![peer_2.clone()]);
+        assert_eq!(store.unacked_nodes(&msg_1), HashSet::from_iter([&peer_2]));
         assert_eq!(
-            store
-                .unacked_nodes(&msg_2)
-                .into_iter()
-                .collect::<HashSet<_>>(),
-            HashSet::from_iter([peer_1.clone(), peer_2.clone()])
+            store.unacked_nodes(&msg_2),
+            HashSet::from_iter([&peer_1, &peer_2])
         );
         assert_eq!(
             store.unacked_nodes_all_msgs(),
             HashMap::from_iter([
-                (peer_1, HashSet::from_iter([msg_2])),
-                (peer_2, HashSet::from_iter([msg_1, msg_2])),
-                (peer_3, HashSet::new())
+                (peer_1.clone(), HashSet::from_iter([msg_2])),
+                (peer_2.clone(), HashSet::from_iter([msg_1, msg_2])),
+                (peer_3.clone(), HashSet::new())
+            ])
+        );
+
+        assert_eq!(
+            store.recent_peer_inserts(),
+            HashMap::from_iter([
+                (peer_1.clone(), HashSet::from_iter([msg_1])),
+                (peer_2.clone(), HashSet::new()),
+                (peer_3.clone(), HashSet::from_iter([msg_1, msg_2]))
+            ])
+        );
+
+        assert_eq!(store.unacked_nodes(&msg_1), HashSet::from_iter([&peer_2]));
+        assert_eq!(
+            store.unacked_nodes(&msg_2),
+            HashSet::from_iter([&peer_1, &peer_2])
+        );
+        assert_eq!(
+            store.unacked_nodes_all_msgs(),
+            HashMap::from_iter([
+                (peer_1.clone(), HashSet::from_iter([msg_2])),
+                (peer_2.clone(), HashSet::from_iter([msg_1, msg_2])),
+                (peer_3.clone(), HashSet::new())
             ])
         );
     }

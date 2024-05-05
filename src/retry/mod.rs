@@ -14,7 +14,7 @@ use tracing::debug;
 use tracing::error;
 
 use crate::message_store::BroadcastMessageStore;
-use crate::pre_message::PreMessage;
+πuse crate::pre_message::PreMessage;
 use crate::primitives::MessageRecipient;
 use crate::retry::policy::ExponentialBackOff;
 use crate::retry::store::RetryStore;
@@ -51,12 +51,11 @@ impl RetryHandler {
 
     pub(crate) async fn run(&mut self) {
         debug!("Running retry handler");
-        let mut interval = interval(Duration::from_millis(5));
+        let mut interval = interval(Duration::from_millis(1));
         loop {
             interval.tick().await;
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
-
             let mut lock = self.broadcast_message_store.write().await;
             let unacked_broadcast_messages_by_nodes = lock.unacked_nodes_all_msgs();
             let recently_acked_msgs_by_nodes = lock.recent_peer_inserts();
@@ -77,6 +76,10 @@ impl RetryHandler {
                         .filter(|msg| !self.retry_store.contains(msg))
                 })
                 .collect();
+            debug!(
+                "new_unacked_broadcast_messages {:?}",
+                new_unacked_broadcast_messages
+            );
             // Remove all received msgs from the retry store.
             let msgs_to_remove = recently_acked_msgs_by_nodes
                 .into_iter()
@@ -90,7 +93,6 @@ impl RetryHandler {
                     })
                 })
                 .collect_vec();
-
             for msg in new_unacked_broadcast_messages {
                 self.retry_store.add(msg)
             }
@@ -100,15 +102,12 @@ impl RetryHandler {
             }
 
             for msgs in self.retry_store.by_ref() {
-                let n_msgs = msgs.len();
-                if let Err(e) = self
-                    .msg_dispatch_queue_tx
-                    .send(msgs.into_iter().map(|msg| msg.msg).collect())
-                    .await
-                {
-                    error!("Could not retry broadcast message: {:?}", e);
-                } else {
-                    debug!("Retried {} messages", n_msgs);
+                debug!("Retrying messages {:?}", msgs);
+                let to_retry = msgs.into_iter().map(|msg| msg.msg).collect_vec();
+                if !to_retry.is_empty() {
+                    if let Err(e) = self.msg_dispatch_queue_tx.send(to_retry).await {
+                        error!("Could not retry broadcast message: {:?}", e);
+                    }
                 }
             }
         }

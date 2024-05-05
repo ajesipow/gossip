@@ -17,3 +17,4 @@ tokio = {version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "syn
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = "0.3.18"
+log = "0.4.20"

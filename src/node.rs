@@ -103,8 +103,10 @@ impl Node {
             let broadcast_message_store = self.broadcast_message_store.clone();
             tokio::spawn(async move {
                 let responses = handle_message(msg, broadcast_message_store).await;
-                debug!("sending initial messages: {:?}", responses.len());
-                let _ = tx.send(responses).await;
+                if !responses.is_empty() {
+                    debug!("sending initial messages: {:?}", responses.len());
+                    let _ = tx.send(responses).await;
+                }
             });
         }
     }

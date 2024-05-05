@@ -344,6 +344,7 @@ dependencies = [
  "chrono",
  "console-subscriber",
  "itertools",
+ "log",
  "once_cell",
  "serde",
  "serde_json",

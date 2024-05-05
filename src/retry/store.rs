@@ -75,6 +75,9 @@ impl<P: RetryPolicy> RetryStore<P> {
             // TODO this would grow indefinitely over time
             // Remember the key to not retry in the future
             *decision = RetryDecision::DoNotRetry;
+        } else {
+            self.broadcast_messages
+                .insert(pre_msg.clone(), RetryDecision::DoNotRetry);
         }
     }
 }
@@ -157,7 +160,7 @@ mod tests {
         assert!(store.contains(&msg_1));
         assert!(store.contains(&msg_2));
 
-        sleep(Duration::from_millis(10));
+        sleep(Duration::from_millis(200));
 
         let msg = store.next().unwrap();
         assert_eq!(msg.into_iter().map(|m| m.msg).collect_vec(), vec![msg_1]);

@@ -30,14 +30,14 @@ impl ExponentialBackOff {
         Self {
             max_retry_attempts,
             base_interval_ms: 5.0,
-            exponential_rate: 5.0,
+            exponential_rate: 4.0,
         }
     }
 }
 
 impl Default for ExponentialBackOff {
     fn default() -> Self {
-        Self::new(5)
+        Self::new(8)
     }
 }
 
