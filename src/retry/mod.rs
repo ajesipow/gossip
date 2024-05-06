@@ -1,6 +1,7 @@
 mod policy;
 mod store;
 
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,7 +15,7 @@ use tracing::debug;
 use tracing::error;
 
 use crate::message_store::BroadcastMessageStore;
-πuse crate::pre_message::PreMessage;
+use crate::pre_message::PreMessage;
 use crate::primitives::MessageRecipient;
 use crate::retry::policy::ExponentialBackOff;
 use crate::retry::store::RetryStore;
@@ -66,31 +67,22 @@ impl RetryHandler {
                 .flat_map(|(neighbour, unacked_msgs)| {
                     unacked_msgs
                         .into_iter()
-                        .map(move |unacked_msg| {
-                            PreMessage::broadcast(
-                                // TODO zip repeat
-                                MessageRecipient::new(neighbour.to_string()),
-                                unacked_msg,
-                            )
+                        .zip(iter::repeat(neighbour))
+                        .map(move |(unacked_msg, peer)| {
+                            PreMessage::broadcast(MessageRecipient::new(peer), unacked_msg)
                         })
                         .filter(|msg| !self.retry_store.contains(msg))
                 })
                 .collect();
-            debug!(
-                "new_unacked_broadcast_messages {:?}",
-                new_unacked_broadcast_messages
-            );
             // Remove all received msgs from the retry store.
             let msgs_to_remove = recently_acked_msgs_by_nodes
                 .into_iter()
                 .flat_map(|(neighbour, bdcast_msgs)| {
-                    // TODO zip repeat
-                    bdcast_msgs.into_iter().map(move |bdcast_msg| {
-                        PreMessage::broadcast(
-                            MessageRecipient::new(neighbour.to_string()),
-                            bdcast_msg,
-                        )
-                    })
+                    bdcast_msgs.into_iter().zip(iter::repeat(neighbour)).map(
+                        move |(bdcast_msg, peer)| {
+                            PreMessage::broadcast(MessageRecipient::new(peer), bdcast_msg)
+                        },
+                    )
                 })
                 .collect_vec();
             for msg in new_unacked_broadcast_messages {
