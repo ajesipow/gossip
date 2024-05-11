@@ -1,63 +1,86 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::sync::Arc;
 
-use anyhow::anyhow;
 use anyhow::Result;
+use once_cell::sync::OnceCell;
+use thingbuf::mpsc;
+use thingbuf::mpsc::Sender;
+use tokio::sync::RwLock;
+use tracing::debug;
+use tracing::info;
+use tracing::span;
+use tracing::Level;
 
-use crate::protocol::Body;
-use crate::protocol::BroadcastBody;
-use crate::protocol::BroadcastOkBody;
-use crate::protocol::EchoOkBody;
-use crate::protocol::InitOkBody;
-use crate::protocol::Message;
-use crate::protocol::ReadOkBody;
-use crate::protocol::TopologyOkBody;
+use crate::dispatch::MessageDispatcher;
+use crate::message_handling::handle_message;
+use crate::message_store::BroadcastMessageStore;
+use crate::pre_message::PreMessage;
+use crate::protocol::MessageBody;
+use crate::retry::RetryHandler;
 use crate::transport::StdInTransport;
-use crate::transport::Transport;
+
+pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 
 /// A node representing a server
 #[derive(Debug)]
-pub(crate) struct Node<T = StdInTransport> {
-    id: String,
-    // Counter for message ids, monotonically increasing
-    msg_counter: usize,
-    transport: T,
-    broadcast_messages: HashSet<usize>,
-    // The broadcast messages we sent to or receveived from our neighbours
-    neighbour_broadcast_messages: HashMap<String, HashSet<usize>>,
+pub(crate) struct Node {
+    transport: StdInTransport,
+    msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
+    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
 }
 
-impl<T: Transport> Node<T> {
+impl Node {
     /// Creates a new node.
     /// The node can only be initialised with an init message received via .
     ///
     /// # Panics
     /// An init message is expected for creating the node. This method will
     /// panic if the message could not be read or is of a different type.
-    pub fn new(mut transport: T) -> Self {
+    pub async fn new() -> Self {
+        info!("Starting Node");
+        let mut transport = StdInTransport::new();
+
         let init_msg = transport
             .read_message()
+            .await
             .expect("be able to read init message");
-        let Body::Init(init_body) = init_msg.body else {
+
+        let MessageBody::Init(ref init_body) = init_msg.body else {
             panic!("expected init message, got: {:?}", init_msg.body)
         };
-        let reply = Message {
-            src: init_msg.dest,
-            dest: init_msg.src,
-            body: Body::InitOk(InitOkBody {
-                in_reply_to: init_body.msg_id,
-            }),
-        };
-        transport
-            .send_message(&reply)
-            .expect("be able to send init ok response");
+        NODE_ID
+            .set(init_body.node_id.clone())
+            .expect("Node ID already set");
+
+        // FIXME AJES: shutdown gracefully
+        // Using a vec to batch-send messages
+        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<Vec<PreMessage>>(8);
+
+        let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
+
+        let mut message_dispatcher =
+            MessageDispatcher::new(msg_dispatch_queue_rx, broadcast_message_store.clone());
+        tokio::spawn(async move {
+            message_dispatcher.run().await;
+        });
+        let msg_dispatch_queue_tx_for_retry_handler = msg_dispatch_queue_tx.clone();
+        let msgs = handle_message(init_msg, broadcast_message_store.clone()).await;
+        msg_dispatch_queue_tx
+            .send(msgs)
+            .await
+            .expect("be able to send init message");
+
+        let mut retry_handler = RetryHandler::new(
+            msg_dispatch_queue_tx_for_retry_handler,
+            broadcast_message_store.clone(),
+        );
+        tokio::spawn(async move {
+            retry_handler.run().await;
+        });
 
         Self {
-            id: init_body.node_id,
-            msg_counter: 0,
+            msg_dispatch_queue_tx,
             transport,
-            broadcast_messages: HashSet::new(),
-            neighbour_broadcast_messages: HashMap::new(),
+            broadcast_message_store,
         }
     }
 
@@ -67,96 +90,24 @@ impl<T: Transport> Node<T> {
     /// # Errors
     /// Throws an error if the message cannot be read, sent or is of an unknown
     /// type.
-    pub fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         loop {
-            let msg = self.transport.read_message()?;
-            let response = self.handle_message(&msg.src, msg.body)?;
-            if let Some(response_body) = response {
-                self.send(msg.src, response_body)?;
-            }
+            let span = span!(
+                Level::INFO,
+                "node_operation",
+                node_id = NODE_ID.get().expect("Node ID set")
+            );
+            let _enter = span.enter();
+            let msg = self.transport.read_message().await?;
+            let tx = self.msg_dispatch_queue_tx.clone();
+            let broadcast_message_store = self.broadcast_message_store.clone();
+            tokio::spawn(async move {
+                let responses = handle_message(msg, broadcast_message_store).await;
+                if !responses.is_empty() {
+                    debug!("sending initial messages: {:?}", responses.len());
+                    let _ = tx.send(responses).await;
+                }
+            });
         }
-    }
-
-    /// Send a message message from the node.
-    fn send(
-        &mut self,
-        dest: String,
-        body: Body,
-    ) -> Result<()> {
-        let msg = Message {
-            src: self.id.clone(),
-            dest,
-            body,
-        };
-        self.transport.send_message(&msg)
-    }
-
-    /// Handle incoming messages and return an appropriate response.
-    fn handle_message(
-        &mut self,
-        src: &str,
-        msg_body: Body,
-    ) -> Result<Option<Body>> {
-        match msg_body {
-            Body::Echo(echo_body) => Ok(Some(Body::EchoOk(EchoOkBody {
-                msg_id: self.message_counter(),
-                in_reply_to: Some(echo_body.msg_id),
-                echo: echo_body.echo,
-            }))),
-            Body::BroadcastOk(_) => Ok(None),
-            Body::Broadcast(broadcast) => {
-                let message = broadcast.message;
-                self.broadcast_messages.insert(message);
-                let receivers: Vec<String> = self
-                    .neighbour_broadcast_messages
-                    .iter()
-                    .filter_map(|(neighbour, messages)| {
-                        if src != neighbour && !messages.contains(&message) {
-                            Some(neighbour.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                // Send message to neighbours if they have not already seen the same ID
-                for dest in receivers {
-                    // No need to send the same message back
-                    let msg_id = self.message_counter();
-                    self.send(dest, Body::Broadcast(BroadcastBody { message, msg_id }))?;
-                }
-                // The neighbour now has seen the message either because we
-                // received it from them or we sent it to them.
-                for (_, messages) in self.neighbour_broadcast_messages.iter_mut() {
-                    messages.insert(message);
-                }
-
-                Ok(Some(Body::BroadcastOk(BroadcastOkBody {
-                    msg_id: self.message_counter(),
-                    in_reply_to: broadcast.msg_id,
-                })))
-            }
-            Body::Read(read) => Ok(Some(Body::ReadOk(ReadOkBody {
-                messages: self.broadcast_messages.iter().copied().collect(),
-                in_reply_to: read.msg_id,
-            }))),
-            Body::Topology(mut body) => {
-                if let Some(neighbours) = body.topology.remove(&self.id) {
-                    for neighbour in neighbours {
-                        self.neighbour_broadcast_messages
-                            .entry(neighbour)
-                            .or_default();
-                    }
-                }
-                Ok(Some(Body::TopologyOk(TopologyOkBody {
-                    in_reply_to: body.msg_id,
-                })))
-            }
-            t => Err(anyhow!("cannot handle message of type {t:?}")),
-        }
-    }
-
-    fn message_counter(&mut self) -> usize {
-        self.msg_counter += 1;
-        self.msg_counter
     }
 }

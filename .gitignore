@@ -1,2 +1,6 @@
 /target
+/store
 /maelstrom
+/.idea
+/logs
+.DS_Store
