@@ -36,6 +36,7 @@ impl BroadcastMessageStore {
     }
 
     /// Registers a peer node in the store.
+    #[allow(dead_code)]
     pub(crate) fn register_peer(
         &mut self,
         peer: String,
@@ -50,6 +51,7 @@ impl BroadcastMessageStore {
 
     /// Gets all peer nodes that have not yet acknowledged the given
     /// `broadcast_message` according to the state of the store.
+    #[allow(dead_code)]
     pub(crate) fn unacked_nodes(
         &self,
         broadcast_message: &BroadcastMessage,

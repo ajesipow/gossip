@@ -131,6 +131,7 @@ impl<P: RetryPolicy> Iterator for RetryStore<P> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -148,10 +149,12 @@ mod tests {
         let msg_1 = PreMessage::broadcast(
             MessageRecipient::new("n1".to_string()),
             BroadcastMessage::new(1),
+            HashSet::new(),
         );
         let msg_2 = PreMessage::broadcast(
             MessageRecipient::new("n2".to_string()),
             BroadcastMessage::new(2),
+            HashSet::new(),
         );
 
         store.add(msg_1.clone());

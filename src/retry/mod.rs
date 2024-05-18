@@ -1,6 +1,7 @@
 mod policy;
 mod store;
 
+use std::collections::HashSet;
 use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,7 +70,11 @@ impl RetryHandler {
                         .into_iter()
                         .zip(iter::repeat(neighbour))
                         .map(move |(unacked_msg, peer)| {
-                            PreMessage::broadcast(MessageRecipient::new(peer), unacked_msg)
+                            PreMessage::broadcast(
+                                MessageRecipient::new(peer),
+                                unacked_msg,
+                                HashSet::new(),
+                            )
                         })
                         .filter(|msg| !self.retry_store.contains(msg))
                 })
@@ -80,7 +85,11 @@ impl RetryHandler {
                 .flat_map(|(neighbour, bdcast_msgs)| {
                     bdcast_msgs.into_iter().zip(iter::repeat(neighbour)).map(
                         move |(bdcast_msg, peer)| {
-                            PreMessage::broadcast(MessageRecipient::new(peer), bdcast_msg)
+                            PreMessage::broadcast(
+                                MessageRecipient::new(peer),
+                                bdcast_msg,
+                                HashSet::new(),
+                            )
                         },
                     )
                 })

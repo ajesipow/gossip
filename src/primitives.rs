@@ -3,6 +3,22 @@ use std::borrow::Borrow;
 use serde::Deserialize;
 use serde::Serialize;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(transparent)]
+pub(crate) struct NodeId(String);
+
+impl From<String> for NodeId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<NodeId> for MessageRecipient {
+    fn from(value: NodeId) -> Self {
+        Self(value.0)
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, Ord, PartialOrd)]
 #[serde(transparent)]
 pub(crate) struct MessageId(usize);

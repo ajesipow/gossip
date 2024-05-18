@@ -6,6 +6,7 @@ use serde::Serialize;
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
+use crate::primitives::NodeId;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct Message {
@@ -75,6 +76,8 @@ pub(crate) struct ReadOkBody {
 pub(crate) struct BroadcastBody {
     pub message: BroadcastMessage,
     pub msg_id: MessageId,
+    // The nodes we are aware of that have already received the same broadcast message
+    // pub acked_nodes: Vec<NodeId>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

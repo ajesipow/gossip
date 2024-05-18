@@ -2,6 +2,7 @@ use anyhow::Result;
 use node::Node;
 use tracing::metadata::LevelFilter;
 
+mod broadcast;
 mod dispatch;
 mod message_handling;
 mod message_store;
@@ -10,6 +11,7 @@ mod pre_message;
 mod primitives;
 mod protocol;
 mod retry;
+mod topology;
 mod transport;
 
 #[tokio::main]

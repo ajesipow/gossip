@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
+use crate::primitives::NodeId;
 use crate::protocol::BroadcastBody;
 use crate::protocol::BroadcastOkBody;
 use crate::protocol::EchoOkBody;
@@ -31,11 +34,14 @@ impl PreMessage {
     pub fn broadcast(
         dest: MessageRecipient,
         broadcast_message: BroadcastMessage,
+        // The nodes that have already acknowledged this broadcast message
+        acked_nodes: HashSet<NodeId>,
     ) -> Self {
         Self::new(
             dest,
             PreMessageBody::Broadcast(BroadcastPreBody {
                 message: broadcast_message,
+                acked_nodes: acked_nodes.into_iter().collect(),
             }),
         )
     }
@@ -65,6 +71,8 @@ pub(crate) struct InitOkPreBody {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BroadcastPreBody {
     pub message: BroadcastMessage,
+    // The nodes we are aware of that have already received the same broadcast message
+    pub acked_nodes: Vec<NodeId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -108,6 +116,7 @@ impl From<(PreMessageBody, MessageId)> for MessageBody {
             PreMessageBody::Broadcast(body) => Self::Broadcast(BroadcastBody {
                 message: body.message,
                 msg_id: msg_count,
+                // acked_nodes: body.acked_nodes,
             }),
             PreMessageBody::BroadcastOk(body) => Self::BroadcastOk(BroadcastOkBody {
                 msg_id: msg_count,
