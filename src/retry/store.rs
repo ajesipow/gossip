@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use chrono::DateTime;
 use chrono::Utc;
 
-use crate::pre_message::PreMessage;
+use crate::protocol::Message;
 use crate::retry::policy::RetryDecision;
 use crate::retry::policy::RetryPolicy;
 use crate::retry::RetryMessage;
@@ -13,7 +13,7 @@ use crate::retry::RetryMessage;
 #[derive(Debug)]
 pub(crate) struct RetryStore<P> {
     retry_queue: BTreeMap<DateTime<Utc>, Vec<RetryMessage>>,
-    broadcast_messages: HashMap<PreMessage, RetryDecision>,
+    broadcast_messages: HashMap<Message, RetryDecision>,
     policy: P,
 }
 
@@ -29,7 +29,7 @@ impl<P: RetryPolicy> RetryStore<P> {
 
     pub(crate) fn add(
         &mut self,
-        msg: PreMessage,
+        msg: Message,
     ) {
         if self.broadcast_messages.contains_key(&msg) {
             return;
@@ -56,14 +56,14 @@ impl<P: RetryPolicy> RetryStore<P> {
 
     pub(crate) fn contains(
         &self,
-        msg: &PreMessage,
+        msg: &Message,
     ) -> bool {
         self.broadcast_messages.contains_key(msg)
     }
 
     pub(crate) fn remove(
         &mut self,
-        pre_msg: &PreMessage,
+        pre_msg: &Message,
     ) {
         if let Some(decision) = self.broadcast_messages.get_mut(pre_msg) {
             match decision {
@@ -131,7 +131,6 @@ impl<P: RetryPolicy> Iterator for RetryStore<P> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -140,21 +139,20 @@ mod tests {
     use super::*;
     use crate::primitives::BroadcastMessage;
     use crate::primitives::MessageRecipient;
+    use crate::protocol::Message;
     use crate::retry::policy::ExponentialBackOff;
 
     #[test]
     fn adding_messages_works() {
         let mut store = RetryStore::new(ExponentialBackOff::default());
 
-        let msg_1 = PreMessage::broadcast(
+        let msg_1 = Message::broadcast(
             MessageRecipient::new("n1".to_string()),
             BroadcastMessage::new(1),
-            HashSet::new(),
         );
-        let msg_2 = PreMessage::broadcast(
+        let msg_2 = Message::broadcast(
             MessageRecipient::new("n2".to_string()),
             BroadcastMessage::new(2),
-            HashSet::new(),
         );
 
         store.add(msg_1.clone());

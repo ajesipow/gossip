@@ -3,18 +3,82 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Result;
+use tokio::sync::RwLock;
 
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
+
+#[derive(Debug, Clone)]
+pub(crate) struct BroadcastMessageStoreHandle {
+    inner: Arc<RwLock<BroadcastMessageStore>>,
+}
+
+impl BroadcastMessageStoreHandle {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(BroadcastMessageStore::new())),
+        }
+    }
+
+    pub(crate) async fn unacked_nodes_all_msgs(
+        &self
+    ) -> HashMap<String, HashSet<BroadcastMessage>> {
+        self.inner.read().await.unacked_nodes_all_msgs()
+    }
+
+    pub(crate) async fn msgs(&self) -> Vec<BroadcastMessage> {
+        self.inner.read().await.msgs()
+    }
+
+    pub(crate) async fn recent_peer_inserts(&self) -> HashMap<String, HashSet<BroadcastMessage>> {
+        self.inner.write().await.recent_peer_inserts()
+    }
+
+    pub(crate) async fn insert(
+        &self,
+        broadcast_msg: BroadcastMessage,
+    ) {
+        self.inner.write().await.insert(broadcast_msg);
+    }
+
+    pub(crate) async fn insert_for_peer_by_msg_id_if_exists(
+        &self,
+        // TODO adapt type to other methods (make NodeId)
+        peer_node: String,
+        msg_id: &MessageId,
+    ) -> Result<()> {
+        let mut lock = self.inner.write().await;
+        lock.insert_for_peer_by_msg_id_if_exists(peer_node, msg_id)
+    }
+
+    pub(crate) async fn register_msg_id(
+        &self,
+        msg_id: MessageId,
+        broadcast_msg: BroadcastMessage,
+    ) {
+        self.inner
+            .write()
+            .await
+            .register_msg_id(msg_id, broadcast_msg);
+    }
+
+    pub(crate) async fn register_peer(
+        &self,
+        peer: String,
+    ) {
+        self.inner.write().await.register_peer(peer);
+    }
+}
 
 /// Stores broadcast messages of this node and peer nodes to keep track of
 /// other node's state. This information can be used to limit the number of
 /// broadcast messages that need to be (re-)sent to peers.
 #[derive(Debug)]
-pub(crate) struct BroadcastMessageStore {
+struct BroadcastMessageStore {
     // Store the known broadcast messages of peer nodes
     peer_broadcast_msgs: HashMap<String, HashSet<BroadcastMessage>>,
     recent_peer_broadcast_msgs: HashMap<String, HashSet<BroadcastMessage>>,
@@ -36,8 +100,7 @@ impl BroadcastMessageStore {
     }
 
     /// Registers a peer node in the store.
-    #[allow(dead_code)]
-    pub(crate) fn register_peer(
+    fn register_peer(
         &mut self,
         peer: String,
     ) {
@@ -45,14 +108,14 @@ impl BroadcastMessageStore {
     }
 
     /// Gets all broadcast messages this node has stored.
-    pub(crate) fn msgs(&self) -> Vec<BroadcastMessage> {
+    fn msgs(&self) -> Vec<BroadcastMessage> {
         self.node_broadcast_msgs.iter().copied().collect()
     }
 
     /// Gets all peer nodes that have not yet acknowledged the given
     /// `broadcast_message` according to the state of the store.
     #[allow(dead_code)]
-    pub(crate) fn unacked_nodes(
+    fn unacked_nodes(
         &self,
         broadcast_message: &BroadcastMessage,
     ) -> HashSet<&String> {
@@ -90,7 +153,7 @@ impl BroadcastMessageStore {
 
     /// Gets all [BroadcastMessage]s this node is aware of that have not yet
     /// been acknowledged by peer nodes.
-    pub(crate) fn unacked_nodes_all_msgs(&self) -> HashMap<String, HashSet<BroadcastMessage>> {
+    fn unacked_nodes_all_msgs(&self) -> HashMap<String, HashSet<BroadcastMessage>> {
         let n_peers = max(
             self.peer_broadcast_msgs.len(),
             self.recent_peer_broadcast_msgs.len(),
@@ -122,7 +185,7 @@ impl BroadcastMessageStore {
 
     /// Gets the broadcast messages by peer that have been inserted since the
     /// last time this method was called.
-    pub(crate) fn recent_peer_inserts(&mut self) -> HashMap<String, HashSet<BroadcastMessage>> {
+    fn recent_peer_inserts(&mut self) -> HashMap<String, HashSet<BroadcastMessage>> {
         let recents = mem::take(&mut self.recent_peer_broadcast_msgs);
         for (peer, recent_msgs) in &recents {
             // Insert peers back into recent map otherwise inserting will not work
@@ -146,7 +209,7 @@ impl BroadcastMessageStore {
     }
 
     /// Inserts a [BroadcastMessage] for this node into the store.
-    pub(crate) fn insert(
+    fn insert(
         &mut self,
         broadcast_msg: BroadcastMessage,
     ) {
@@ -155,7 +218,7 @@ impl BroadcastMessageStore {
 
     /// Inserts a [BroadcastMessage] for an existing peer node into the store.
     /// Peer nodes need to be registered first with [Self::register_peer].
-    pub(crate) fn insert_for_peer_if_exists(
+    fn insert_for_peer_if_exists(
         &mut self,
         peer_node: &str,
         broadcast_msg: BroadcastMessage,
@@ -176,7 +239,7 @@ impl BroadcastMessageStore {
     /// # Errors
     /// Returns an error if the `msg_id` is unknown (i.e. has not previously
     /// been registered via [Self::register_msg_id]).
-    pub(crate) fn insert_for_peer_by_msg_id_if_exists(
+    fn insert_for_peer_by_msg_id_if_exists(
         &mut self,
         peer_node: String,
         msg_id: &MessageId,
@@ -192,7 +255,7 @@ impl BroadcastMessageStore {
     ///
     /// The [MessageId] can then be used to retrieve the associated
     /// [BroadcastMessage] with [`Self::get_by_msg_id()`].
-    pub(crate) fn register_msg_id(
+    fn register_msg_id(
         &mut self,
         msg_id: MessageId,
         broadcast_msg: BroadcastMessage,
@@ -223,8 +286,8 @@ mod tests {
         let mut store = BroadcastMessageStore::new();
         let broadcast_msg_1 = BroadcastMessage::new(1);
         let broadcast_msg_2 = BroadcastMessage::new(2);
-        let msg_id_1 = MessageId::new(0);
-        let msg_id_2 = MessageId::new(1);
+        let msg_id_1 = MessageId::new();
+        let msg_id_2 = MessageId::new();
         let peer = "n1".to_string();
 
         store.register_peer(peer.clone());
@@ -252,7 +315,7 @@ mod tests {
     ) {
         let mut store = BroadcastMessageStore::new();
         let broadcast_msg = BroadcastMessage::new(1);
-        let msg_id = MessageId::new(0);
+        let msg_id = MessageId::new();
         let peer = "n1".to_string();
 
         store.register_msg_id(msg_id, broadcast_msg);

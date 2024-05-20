@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use itertools::Itertools;
@@ -32,8 +33,8 @@ impl Topology {
     }
 }
 
-impl From<(HashMap<String, Vec<String>>, String)> for Topology {
-    fn from((value, node_id): (HashMap<String, Vec<String>>, String)) -> Self {
+impl From<(BTreeMap<String, Vec<String>>, String)> for Topology {
+    fn from((value, node_id): (BTreeMap<String, Vec<String>>, String)) -> Self {
         Self {
             current_node: node_id.into(),
             raw_topology: value

@@ -32,7 +32,7 @@ impl NodeSelector {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use std::collections::HashSet;
 
     use crate::broadcast::node_selector::NodeSelector;
@@ -43,7 +43,7 @@ mod tests {
     fn test_sampling_contains_only_unique_nodes_and_not_self() {
         let this_node = "n1".to_string();
         let topology: Topology = (
-            HashMap::from_iter([
+            BTreeMap::from_iter([
                 ("n1".to_string(), vec!["n2".to_string(), "n3".to_string()]),
                 ("n2".to_string(), vec!["n1".to_string()]),
                 ("n3".to_string(), vec!["n1".to_string()]),

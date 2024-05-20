@@ -1,60 +1,48 @@
-use std::sync::Arc;
-
-use tokio::sync::RwLock;
 use tracing::error;
 
-use crate::broadcast::gossip::GossipBroadcast;
-use crate::message_store::BroadcastMessageStore;
+use crate::broadcast::Broadcast;
 use crate::node::NODE_ID;
-use crate::pre_message::BroadcastOkPreBody;
-use crate::pre_message::EchoOkPreBody;
-use crate::pre_message::InitOkPreBody;
-use crate::pre_message::PreMessage;
-use crate::pre_message::PreMessageBody;
-use crate::pre_message::ReadOkPreBody;
-use crate::pre_message::TopologyOkPreBody;
 use crate::primitives::MessageRecipient;
 use crate::protocol::Message;
 use crate::protocol::MessageBody;
 use crate::topology::Topology;
 
 /// Handle incoming messages and return an appropriate response.
-pub(crate) async fn handle_message(
+pub(crate) async fn handle_message<B>(
     message: Message,
-    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
-    broadcaster: Arc<RwLock<GossipBroadcast>>,
-) -> Vec<PreMessage> {
+    broadcaster: B,
+) -> Vec<Message>
+where
+    B: Broadcast,
+{
     let src = message.src;
     match message.body {
-        MessageBody::Echo(body) => vec![PreMessage::new(
+        MessageBody::Echo(body) => vec![Message::echo_ok(
             MessageRecipient::new(src),
-            PreMessageBody::EchoOk(EchoOkPreBody {
-                echo: body.echo,
-                in_reply_to: body.msg_id,
-            }),
+            body.echo,
+            body.msg_id,
         )],
         MessageBody::EchoOk(_) => Default::default(),
         MessageBody::Init(body) => {
-            vec![PreMessage::new(
-                MessageRecipient::new(src),
-                PreMessageBody::InitOk(InitOkPreBody {
-                    in_reply_to: body.msg_id,
-                }),
-            )]
+            vec![Message::init_ok(MessageRecipient::new(src), body.msg_id)]
         }
         MessageBody::InitOk(_) => Default::default(),
         MessageBody::Broadcast(body) => {
-            let mut messages = vec![];
+            // use spawn?
+            broadcaster.broadcast(body.message).await;
 
-            let broadcast_message = body.message;
-            let mut lock = broadcaster.write().await;
-            lock.add(broadcast_message);
-            drop(lock);
+            // --> gossip
+            // let broadcast_message = body.message;
+            // let mut lock = broadcaster.write().await;
+            // lock.add(broadcast_message);
+            // drop(lock);
+            //
+            // let broadcast_message_store_clone = broadcast_message_store.clone();
+            // // let peer = src.clone();
+            // let mut message_store_lock = broadcast_message_store_clone.write().await;
+            // message_store_lock.insert(broadcast_message);
+            // <-- gossip
 
-            let broadcast_message_store_clone = broadcast_message_store.clone();
-            // let peer = src.clone();
-            let mut message_store_lock = broadcast_message_store_clone.write().await;
-            message_store_lock.insert(broadcast_message);
             // // Record which message we already received from another node so we don't
             // // unnecessarily send it back again.
             // // We're not just adding any `src` as key to this map because we're also
@@ -74,73 +62,45 @@ pub(crate) async fn handle_message(
             //     .into_iter()
             //     .cloned()
             //     .collect_vec();
-            drop(message_store_lock);
-
-            messages.push(PreMessage::new(
-                MessageRecipient::new(src),
-                PreMessageBody::BroadcastOk(BroadcastOkPreBody {
-                    in_reply_to: body.msg_id,
-                }),
-            ));
+            // drop(message_store_lock);
 
             // messages.extend(
             //     unacked_nodes.into_iter().map(|node| {
-            //         PreMessage::broadcast(MessageRecipient::new(node), broadcast_message)
+            //         Message::broadcast(MessageRecipient::new(node), broadcast_message)
             //     }),
             // );
 
-            messages
+            vec![Message::broadcast_ok(
+                MessageRecipient::new(src),
+                body.msg_id,
+            )]
         }
         MessageBody::BroadcastOk(b) => {
-            // Remember that the recipient received the broadcast message so that we do not
-            // send it again.
-            let mut lock = broadcast_message_store.write().await;
-            // TODO avoid clone
-            let res = lock.insert_for_peer_by_msg_id_if_exists(src.clone(), &b.in_reply_to);
-            drop(lock);
-            if let Err(e) = res {
-                error!("could not insert broadcast message for peer: {e:?}");
-            }
+            broadcaster
+                .ack_by_msg_id(src.clone().into(), &b.in_reply_to)
+                .await;
             Default::default()
         }
         MessageBody::Read(body) => {
-            let store_lock = broadcast_message_store.read().await;
-            let messages = store_lock.msgs();
-            drop(store_lock);
-            vec![PreMessage::new(
+            let msgs = broadcaster.messages().await;
+            vec![Message::read_ok(
                 MessageRecipient::new(src),
-                PreMessageBody::ReadOk(ReadOkPreBody {
-                    messages,
-                    in_reply_to: body.msg_id,
-                }),
+                msgs,
+                body.msg_id,
             )]
         }
         MessageBody::ReadOk(_) => Default::default(),
         MessageBody::Topology(body) => {
             if let Some(node_id) = NODE_ID.get() {
                 let topology = Topology::from((body.topology, node_id.clone()));
-
-                //
-                // if let Some(neighbours) = body.topology.remove(node_id) {
-                //     let mut message_store_lock = broadcast_message_store.write().await;
-                //     for neighbour in neighbours {
-                //         message_store_lock.register_peer(neighbour);
-                //     }
-                //     drop(message_store_lock)
-                // }
-                //
-                let mut lock = broadcaster.write().await;
-                lock.topology(topology);
-                drop(lock);
+                broadcaster.update_topology(topology).await;
             } else {
                 error!("NODE_ID uninitialised!")
             }
 
-            vec![PreMessage::new(
+            vec![Message::topology_ok(
                 MessageRecipient::new(src),
-                PreMessageBody::TopologyOk(TopologyOkPreBody {
-                    in_reply_to: body.msg_id,
-                }),
+                body.msg_id,
             )]
         }
         MessageBody::TopologyOk(_) => Default::default(),

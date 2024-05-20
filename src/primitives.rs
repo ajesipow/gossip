@@ -1,11 +1,26 @@
 use std::borrow::Borrow;
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use serde::Deserialize;
 use serde::Serialize;
 
+pub(crate) static MESSAGE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct NodeId(String);
+
+impl Display for NodeId {
+    fn fmt(
+        &self,
+        f: &mut Formatter<'_>,
+    ) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl From<String> for NodeId {
     fn from(value: String) -> Self {
@@ -24,8 +39,8 @@ impl From<NodeId> for MessageRecipient {
 pub(crate) struct MessageId(usize);
 
 impl MessageId {
-    pub(crate) fn new(id: usize) -> Self {
-        Self(id)
+    pub(crate) fn new() -> Self {
+        Self(MESSAGE_COUNTER.fetch_add(1, Ordering::Relaxed))
     }
 }
 

@@ -1,80 +1,55 @@
 use std::fmt::Debug;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Result;
 use serde::Serialize;
+use thingbuf::mpsc;
 use thingbuf::mpsc::Receiver;
-use tokio::sync::RwLock;
+use thingbuf::mpsc::Sender;
 use tracing::debug;
 
-use crate::message_store::BroadcastMessageStore;
-use crate::node::NODE_ID;
-use crate::pre_message::PreMessage;
-use crate::primitives::MessageId;
 use crate::protocol::Message;
-use crate::protocol::MessageBody;
 
-pub(crate) struct MessageDispatcher {
-    msg_dispatch_queue_rx: Receiver<Vec<PreMessage>>,
-    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
-    message_counter: usize,
-    node_id: String,
+#[derive(Debug, Clone)]
+pub(crate) struct MessageDispatchHandle {
+    sender: Sender<Vec<Message>>,
 }
 
-impl MessageDispatcher {
-    pub(crate) fn new(
-        message_queue: Receiver<Vec<PreMessage>>,
-        broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
-    ) -> Self {
-        let node_id = NODE_ID
-            .get()
-            .expect("Node ID not yet initialized")
-            .to_string();
+impl MessageDispatchHandle {
+    pub(crate) fn new() -> Self {
+        let (tx, rx) = mpsc::channel::<Vec<Message>>(8);
+        let dispatch = MessageDispatch::new(rx);
+        tokio::spawn(run_dispatch(dispatch));
+        Self { sender: tx }
+    }
+
+    pub(crate) async fn dispatch(
+        &self,
+        msgs: Vec<Message>,
+    ) -> Result<()> {
+        self.sender.send(msgs).await.map_err(|e| anyhow!(e))
+    }
+}
+
+struct MessageDispatch {
+    msg_dispatch_queue_rx: Receiver<Vec<Message>>,
+}
+
+impl MessageDispatch {
+    fn new(message_queue: Receiver<Vec<Message>>) -> Self {
         Self {
             msg_dispatch_queue_rx: message_queue,
-            message_counter: 0,
-            broadcast_message_store,
-            node_id,
         }
     }
+}
 
-    pub(crate) async fn run(&mut self) {
-        debug!("Running dispatch");
-        loop {
-            if let Some(queued_pre_msgs) = self.msg_dispatch_queue_rx.recv().await {
-                // FIXME: avoid clone
-                let msgs: Vec<Message> = queued_pre_msgs
-                    .into_iter()
-                    .map(|msg| (msg, self.node_id.clone(), self.next_message_id()).into())
-                    .collect();
-                for msg in &msgs {
-                    let _ = serialize_and_send(msg);
-                }
-                // Filter for the broadcast messages in advance so that we keep the lock on the
-                // message store below for as little time as possible.
-                let broadcast_msgs = msgs.into_iter().filter_map(|msg| {
-                    if let MessageBody::Broadcast(ref body) = msg.body {
-                        Some((msg.id(), body.message))
-                    } else {
-                        None
-                    }
-                });
-                // Store the broadcast message by the ID so that we later know which broadcast
-                // message was acknowledged (because the Broadcast reply only
-                // contains the original message ID).
-                let mut msg_store_lock = self.broadcast_message_store.write().await;
-                for (msg_id, broadcast_msg) in broadcast_msgs {
-                    msg_store_lock.register_msg_id(msg_id, broadcast_msg);
-                }
-                drop(msg_store_lock);
+async fn run_dispatch(dispatch: MessageDispatch) {
+    loop {
+        if let Some(msgs) = dispatch.msg_dispatch_queue_rx.recv().await {
+            for msg in &msgs {
+                let _ = serialize_and_send(msg);
             }
         }
-    }
-
-    fn next_message_id(&mut self) -> MessageId {
-        self.message_counter += 1;
-        MessageId::new(self.message_counter)
     }
 }
 

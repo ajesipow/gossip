@@ -1,23 +1,15 @@
-use std::sync::Arc;
-use std::time::Duration;
-
 use anyhow::Result;
 use once_cell::sync::OnceCell;
-use thingbuf::mpsc;
-use thingbuf::mpsc::Sender;
-use tokio::sync::RwLock;
-use tokio::time::interval;
 use tracing::debug;
 use tracing::info;
 use tracing::span;
 use tracing::Level;
 
 use crate::broadcast::gossip::Fanout;
-use crate::broadcast::gossip::GossipBroadcast;
-use crate::dispatch::MessageDispatcher;
+use crate::broadcast::gossip::GossipHandle;
+use crate::dispatch::MessageDispatchHandle;
 use crate::message_handling::handle_message;
-use crate::message_store::BroadcastMessageStore;
-use crate::pre_message::PreMessage;
+use crate::message_store::BroadcastMessageStoreHandle;
 use crate::protocol::MessageBody;
 use crate::retry::RetryHandler;
 use crate::transport::StdInTransport;
@@ -29,9 +21,8 @@ pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
 #[derive(Debug)]
 pub(crate) struct Node {
     transport: StdInTransport,
-    msg_dispatch_queue_tx: Sender<Vec<PreMessage>>,
-    broadcast_message_store: Arc<RwLock<BroadcastMessageStore>>,
-    gossip_broadcast: Arc<RwLock<GossipBroadcast>>,
+    msg_dispatch: MessageDispatchHandle,
+    broadcast: GossipHandle,
 }
 
 impl Node {
@@ -58,36 +49,25 @@ impl Node {
             .expect("Node ID already set");
 
         // FIXME AJES: shutdown gracefully
-        // Using a vec to batch-send messages
-        let (msg_dispatch_queue_tx, msg_dispatch_queue_rx) = mpsc::channel::<Vec<PreMessage>>(8);
 
-        let broadcast_message_store = Arc::new(RwLock::new(BroadcastMessageStore::new()));
-        let gossip_broadcast = Arc::new(RwLock::new(GossipBroadcast::new(
-            None,
+        let message_dispatch_handle = MessageDispatchHandle::new();
+        let broadcast_message_store = BroadcastMessageStoreHandle::new();
+
+        let gossip_broadcast = GossipHandle::new(
+            broadcast_message_store.clone(),
             Fanout::new(10),
             3,
-            msg_dispatch_queue_tx.clone(),
-        )));
+            message_dispatch_handle.clone(),
+        );
 
-        let mut message_dispatcher =
-            MessageDispatcher::new(msg_dispatch_queue_rx, broadcast_message_store.clone());
-        tokio::spawn(async move {
-            message_dispatcher.run().await;
-        });
-        let msg_dispatch_queue_tx_for_retry_handler = msg_dispatch_queue_tx.clone();
-        let msgs = handle_message(
-            init_msg,
-            broadcast_message_store.clone(),
-            gossip_broadcast.clone(),
-        )
-        .await;
-        msg_dispatch_queue_tx
-            .send(msgs)
+        let msgs = handle_message(init_msg, gossip_broadcast.clone()).await;
+        message_dispatch_handle
+            .dispatch(msgs)
             .await
             .expect("be able to send init message");
 
         let mut retry_handler = RetryHandler::new(
-            msg_dispatch_queue_tx_for_retry_handler,
+            message_dispatch_handle.clone(),
             broadcast_message_store.clone(),
         );
         tokio::spawn(async move {
@@ -95,10 +75,9 @@ impl Node {
         });
 
         Self {
-            msg_dispatch_queue_tx,
+            msg_dispatch: message_dispatch_handle,
             transport,
-            broadcast_message_store,
-            gossip_broadcast,
+            broadcast: gossip_broadcast,
         }
     }
 
@@ -109,17 +88,6 @@ impl Node {
     /// Throws an error if the message cannot be read, sent or is of an unknown
     /// type.
     pub async fn run(&mut self) -> Result<()> {
-        let gossip = self.gossip_broadcast.clone();
-        tokio::spawn(async move {
-            let mut interval = interval(Duration::from_millis(25));
-            loop {
-                interval.tick().await;
-                let mut lock = gossip.write().await;
-                lock.broadcast().await;
-                drop(lock);
-            }
-        });
-
         loop {
             let span = span!(
                 Level::INFO,
@@ -128,15 +96,13 @@ impl Node {
             );
             let _enter = span.enter();
             let msg = self.transport.read_message().await?;
-            let tx = self.msg_dispatch_queue_tx.clone();
-            let broadcast_message_store = self.broadcast_message_store.clone();
-            let gossip_broadcast = self.gossip_broadcast.clone();
+            let message_dispatch = self.msg_dispatch.clone();
+            let gossip_broadcast = self.broadcast.clone();
             tokio::spawn(async move {
-                let responses =
-                    handle_message(msg, broadcast_message_store, gossip_broadcast).await;
+                let responses = handle_message(msg, gossip_broadcast).await;
                 if !responses.is_empty() {
                     debug!("sending initial messages: {:?}", responses.len());
-                    let _ = tx.send(responses).await;
+                    let _ = message_dispatch.dispatch(responses).await;
                 }
             });
         }
