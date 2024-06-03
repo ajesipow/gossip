@@ -55,10 +55,16 @@ impl RetryHandler {
             interval.tick().await;
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
-            let unacked_broadcast_messages_by_nodes =
-                self.broadcast_message_store.unacked_nodes_all_msgs().await;
-            let recently_acked_msgs_by_nodes =
-                self.broadcast_message_store.recent_peer_inserts().await;
+            let unacked_broadcast_messages_by_nodes = self
+                .broadcast_message_store
+                .unacked_nodes_all_msgs()
+                .await
+                .unwrap();
+            let recently_acked_msgs_by_nodes = self
+                .broadcast_message_store
+                .recent_peer_inserts()
+                .await
+                .unwrap();
 
             let new_unacked_broadcast_messages: Vec<_> = unacked_broadcast_messages_by_nodes
                 .into_iter()

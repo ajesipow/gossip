@@ -1,4 +1,6 @@
+use tracing::debug;
 use tracing::error;
+use tracing::instrument;
 
 use crate::broadcast::Broadcast;
 use crate::node::NODE_ID;
@@ -8,6 +10,9 @@ use crate::protocol::MessageBody;
 use crate::topology::Topology;
 
 /// Handle incoming messages and return an appropriate response.
+#[instrument(skip_all, fields(
+    node = % NODE_ID.get().map(| s | s.as_str()).unwrap_or_else(|| "uninitialised")
+))]
 pub(crate) async fn handle_message<B>(
     message: Message,
     broadcaster: B,
@@ -28,47 +33,9 @@ where
         }
         MessageBody::InitOk(_) => Default::default(),
         MessageBody::Broadcast(body) => {
+            debug!("Received broadcast message: {:?} from {:?}", body, src);
             // use spawn?
             broadcaster.broadcast(body.message).await;
-
-            // --> gossip
-            // let broadcast_message = body.message;
-            // let mut lock = broadcaster.write().await;
-            // lock.add(broadcast_message);
-            // drop(lock);
-            //
-            // let broadcast_message_store_clone = broadcast_message_store.clone();
-            // // let peer = src.clone();
-            // let mut message_store_lock = broadcast_message_store_clone.write().await;
-            // message_store_lock.insert(broadcast_message);
-            // <-- gossip
-
-            // // Record which message we already received from another node so we don't
-            // // unnecessarily send it back again.
-            // // We're not just adding any `src` as key to this map because we're also
-            // // receiving these messages from clients which we don't want to send
-            // broadcast // messages back to.
-            // if message_store_lock
-            //     .insert_for_peer_if_exists(&peer, broadcast_message)
-            //     .is_err()
-            // {
-            //     warn!("peer {peer:?} does not exist in message store");
-            // };
-            //
-            // // Send the same broadcast message to other nodes that we think have not seen
-            // // it yet.
-            // let unacked_nodes = message_store_lock
-            //     .unacked_nodes(&broadcast_message)
-            //     .into_iter()
-            //     .cloned()
-            //     .collect_vec();
-            // drop(message_store_lock);
-
-            // messages.extend(
-            //     unacked_nodes.into_iter().map(|node| {
-            //         Message::broadcast(MessageRecipient::new(node), broadcast_message)
-            //     }),
-            // );
 
             vec![Message::broadcast_ok(
                 MessageRecipient::new(src),
@@ -76,13 +43,15 @@ where
             )]
         }
         MessageBody::BroadcastOk(b) => {
+            debug!("Received broadcast OK message");
             broadcaster
-                .ack_by_msg_id(src.clone().into(), &b.in_reply_to)
+                .ack_by_msg_id(src.clone().into(), b.in_reply_to)
                 .await;
             Default::default()
         }
         MessageBody::Read(body) => {
-            let msgs = broadcaster.messages().await;
+            debug!("Received read message");
+            let msgs = broadcaster.messages().await.unwrap();
             vec![Message::read_ok(
                 MessageRecipient::new(src),
                 msgs,
@@ -91,7 +60,9 @@ where
         }
         MessageBody::ReadOk(_) => Default::default(),
         MessageBody::Topology(body) => {
+            debug!("received topology msg");
             if let Some(node_id) = NODE_ID.get() {
+                debug!("creating topology");
                 let topology = Topology::from((body.topology, node_id.clone()));
                 broadcaster.update_topology(topology).await;
             } else {

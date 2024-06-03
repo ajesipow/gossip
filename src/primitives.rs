@@ -65,6 +65,12 @@ impl MessageRecipient {
     }
 }
 
+impl From<String> for MessageRecipient {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl Borrow<str> for MessageRecipient {
     fn borrow(&self) -> &str {
         &self.0

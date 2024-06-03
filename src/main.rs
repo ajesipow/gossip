@@ -12,6 +12,20 @@ mod protocol;
 mod retry;
 mod topology;
 mod transport;
+mod errors;
+
+// struct ConstLayer;
+//
+// impl<S> Layer<S> for ConstLayer
+//     where
+//         S: Subscriber + for<'span> LookupSpan<'span>,
+// {
+//     fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx:
+// Context<'_, S>) {         if let Some(span) = ctx.span(id) {
+//             span.extensions_mut().insert(NODE_ID.get().map(|s|
+// s.as_str()).unwrap_or_else(|| "uninitialised"))         }
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> Result<()> {

@@ -22,6 +22,8 @@ impl NodeSelector {
         n: usize,
     ) -> Vec<NodeId> {
         let mut rng = rand::thread_rng();
+        // TODO config n
+        let n = n.min(self.all_nodes.len());
         let idcs = sample(&mut rng, self.all_nodes.len(), n);
         idcs.iter()
             .filter_map(|idx| self.all_nodes.get(idx))

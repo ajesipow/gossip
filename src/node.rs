@@ -1,9 +1,6 @@
 use anyhow::Result;
 use once_cell::sync::OnceCell;
-use tracing::debug;
 use tracing::info;
-use tracing::span;
-use tracing::Level;
 
 use crate::broadcast::gossip::Fanout;
 use crate::broadcast::gossip::GossipHandle;
@@ -11,7 +8,7 @@ use crate::dispatch::MessageDispatchHandle;
 use crate::message_handling::handle_message;
 use crate::message_store::BroadcastMessageStoreHandle;
 use crate::protocol::MessageBody;
-use crate::retry::RetryHandler;
+use crate::topology::TopologyStoreHandle;
 use crate::transport::StdInTransport;
 
 // TODO make NodeId
@@ -52,11 +49,12 @@ impl Node {
 
         let message_dispatch_handle = MessageDispatchHandle::new();
         let broadcast_message_store = BroadcastMessageStoreHandle::new();
-
+        let topology_store_handle = TopologyStoreHandle::new();
         let gossip_broadcast = GossipHandle::new(
             broadcast_message_store.clone(),
+            topology_store_handle,
             Fanout::new(10),
-            3,
+            4,
             message_dispatch_handle.clone(),
         );
 
@@ -66,13 +64,13 @@ impl Node {
             .await
             .expect("be able to send init message");
 
-        let mut retry_handler = RetryHandler::new(
-            message_dispatch_handle.clone(),
-            broadcast_message_store.clone(),
-        );
-        tokio::spawn(async move {
-            retry_handler.run().await;
-        });
+        // let mut retry_handler = RetryHandler::new(
+        //     message_dispatch_handle.clone(),
+        //     broadcast_message_store.clone(),
+        // );
+        // tokio::spawn(async move {
+        //     retry_handler.run().await;
+        // });
 
         Self {
             msg_dispatch: message_dispatch_handle,
@@ -89,19 +87,12 @@ impl Node {
     /// type.
     pub async fn run(&mut self) -> Result<()> {
         loop {
-            let span = span!(
-                Level::INFO,
-                "node_operation",
-                node_id = NODE_ID.get().expect("Node ID set")
-            );
-            let _enter = span.enter();
             let msg = self.transport.read_message().await?;
             let message_dispatch = self.msg_dispatch.clone();
             let gossip_broadcast = self.broadcast.clone();
             tokio::spawn(async move {
                 let responses = handle_message(msg, gossip_broadcast).await;
                 if !responses.is_empty() {
-                    debug!("sending initial messages: {:?}", responses.len());
                     let _ = message_dispatch.dispatch(responses).await;
                 }
             });

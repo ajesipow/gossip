@@ -7,7 +7,9 @@ use thingbuf::mpsc;
 use thingbuf::mpsc::Receiver;
 use thingbuf::mpsc::Sender;
 use tracing::debug;
+use tracing::instrument;
 
+use crate::node::NODE_ID;
 use crate::protocol::Message;
 
 #[derive(Debug, Clone)]
@@ -17,7 +19,7 @@ pub(crate) struct MessageDispatchHandle {
 
 impl MessageDispatchHandle {
     pub(crate) fn new() -> Self {
-        let (tx, rx) = mpsc::channel::<Vec<Message>>(8);
+        let (tx, rx) = mpsc::channel::<Vec<Message>>(1024);
         let dispatch = MessageDispatch::new(rx);
         tokio::spawn(run_dispatch(dispatch));
         Self { sender: tx }
@@ -53,6 +55,9 @@ async fn run_dispatch(dispatch: MessageDispatch) {
     }
 }
 
+#[instrument(skip_all, fields(
+    node = % NODE_ID.get().map(| s | s.as_str()).unwrap_or_else(|| "uninitialised")
+))]
 fn serialize_and_send<S>(msg: S) -> Result<()>
 where
     S: Serialize,

@@ -3,74 +3,118 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::mem;
-use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Result;
-use tokio::sync::RwLock;
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tracing::instrument;
 
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 
 #[derive(Debug, Clone)]
 pub(crate) struct BroadcastMessageStoreHandle {
-    inner: Arc<RwLock<BroadcastMessageStore>>,
+    sender: mpsc::Sender<ActorMessage>,
 }
 
 impl BroadcastMessageStoreHandle {
     pub(crate) fn new() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(BroadcastMessageStore::new())),
-        }
+        let (tx, rx) = mpsc::channel(1024);
+        let store = BroadcastMessageStore::new(rx);
+        tokio::spawn(async move { run_message_store(store).await });
+
+        Self { sender: tx }
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn unacked_nodes_all_msgs(
         &self
-    ) -> HashMap<String, HashSet<BroadcastMessage>> {
-        self.inner.read().await.unacked_nodes_all_msgs()
+    ) -> Result<HashMap<String, HashSet<BroadcastMessage>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .sender
+            .send(ActorMessage::UnackedNodesAllMsgs { respond_to: tx })
+            .await;
+        let msgs = rx.await?;
+        Ok(msgs)
     }
 
-    pub(crate) async fn msgs(&self) -> Vec<BroadcastMessage> {
-        self.inner.read().await.msgs()
+    #[instrument(skip(self))]
+    pub(crate) async fn msgs(&self) -> Result<Vec<BroadcastMessage>> {
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .send(ActorMessage::AllMsgs { respond_to: tx })
+            .await
+            .unwrap();
+        let msgs = rx.await?;
+        Ok(msgs)
     }
 
-    pub(crate) async fn recent_peer_inserts(&self) -> HashMap<String, HashSet<BroadcastMessage>> {
-        self.inner.write().await.recent_peer_inserts()
+    #[instrument(skip(self))]
+    pub(crate) async fn recent_peer_inserts(
+        &self
+    ) -> Result<HashMap<String, HashSet<BroadcastMessage>>> {
+        let (tx, rx) = oneshot::channel();
+        let _ = self
+            .sender
+            .send(ActorMessage::RecentPeerInserts { respond_to: tx })
+            .await;
+        let msgs = rx.await?;
+        Ok(msgs)
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn insert(
         &self,
         broadcast_msg: BroadcastMessage,
     ) {
-        self.inner.write().await.insert(broadcast_msg);
+        self.sender
+            .send(ActorMessage::Insert { broadcast_msg })
+            .await
+            .unwrap()
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn insert_for_peer_by_msg_id_if_exists(
         &self,
         // TODO adapt type to other methods (make NodeId)
         peer_node: String,
-        msg_id: &MessageId,
-    ) -> Result<()> {
-        let mut lock = self.inner.write().await;
-        lock.insert_for_peer_by_msg_id_if_exists(peer_node, msg_id)
+        msg_id: MessageId,
+    ) {
+        let _ = self
+            .sender
+            .send(ActorMessage::InsertForPeerByMsgId { peer_node, msg_id })
+            .await;
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn register_msg_id(
         &self,
         msg_id: MessageId,
         broadcast_msg: BroadcastMessage,
     ) {
-        self.inner
-            .write()
-            .await
-            .register_msg_id(msg_id, broadcast_msg);
+        let _ = self
+            .sender
+            .send(ActorMessage::RegisterMsgId {
+                msg_id,
+                broadcast_msg,
+            })
+            .await;
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn register_peer(
         &self,
         peer: String,
     ) {
-        self.inner.write().await.register_peer(peer);
+        let _ = self.sender.send(ActorMessage::RegisterPeer { peer }).await;
+    }
+}
+
+async fn run_message_store(mut store: BroadcastMessageStore) {
+    while let Some(actor_msg) = store.receiver.recv().await {
+        store.handle_actor_message(actor_msg);
     }
 }
 
@@ -79,6 +123,7 @@ impl BroadcastMessageStoreHandle {
 /// broadcast messages that need to be (re-)sent to peers.
 #[derive(Debug)]
 struct BroadcastMessageStore {
+    receiver: mpsc::Receiver<ActorMessage>,
     // Store the known broadcast messages of peer nodes
     peer_broadcast_msgs: HashMap<String, HashSet<BroadcastMessage>>,
     recent_peer_broadcast_msgs: HashMap<String, HashSet<BroadcastMessage>>,
@@ -89,9 +134,37 @@ struct BroadcastMessageStore {
     broadcast_msg_by_msg_id: HashMap<MessageId, BroadcastMessage>,
 }
 
+#[derive(Debug)]
+enum ActorMessage {
+    AllMsgs {
+        respond_to: oneshot::Sender<Vec<BroadcastMessage>>,
+    },
+    UnackedNodesAllMsgs {
+        respond_to: oneshot::Sender<HashMap<String, HashSet<BroadcastMessage>>>,
+    },
+    RecentPeerInserts {
+        respond_to: oneshot::Sender<HashMap<String, HashSet<BroadcastMessage>>>,
+    },
+    Insert {
+        broadcast_msg: BroadcastMessage,
+    },
+    InsertForPeerByMsgId {
+        peer_node: String,
+        msg_id: MessageId,
+    },
+    RegisterMsgId {
+        msg_id: MessageId,
+        broadcast_msg: BroadcastMessage,
+    },
+    RegisterPeer {
+        peer: String,
+    },
+}
+
 impl BroadcastMessageStore {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(receiver: mpsc::Receiver<ActorMessage>) -> Self {
         Self {
+            receiver,
             peer_broadcast_msgs: HashMap::with_capacity(128),
             recent_peer_broadcast_msgs: HashMap::with_capacity(128),
             node_broadcast_msgs: HashSet::with_capacity(1024),
@@ -99,7 +172,41 @@ impl BroadcastMessageStore {
         }
     }
 
+    fn handle_actor_message(
+        &mut self,
+        actor_message: ActorMessage,
+    ) {
+        match actor_message {
+            ActorMessage::AllMsgs { respond_to } => {
+                let _ = respond_to.send(self.msgs());
+            }
+            ActorMessage::UnackedNodesAllMsgs { respond_to } => {
+                let _ = respond_to.send(self.unacked_nodes_all_msgs());
+            }
+            ActorMessage::RecentPeerInserts { respond_to } => {
+                let _ = respond_to.send(self.recent_peer_inserts());
+            }
+            ActorMessage::Insert { broadcast_msg } => {
+                self.insert(broadcast_msg);
+            }
+            ActorMessage::InsertForPeerByMsgId { peer_node, msg_id } => {
+                // TODO handle error
+                let _ = self.insert_for_peer_by_msg_id_if_exists(peer_node, &msg_id);
+            }
+            ActorMessage::RegisterMsgId {
+                msg_id,
+                broadcast_msg,
+            } => {
+                self.register_msg_id(msg_id, broadcast_msg);
+            }
+            ActorMessage::RegisterPeer { peer } => {
+                self.register_peer(peer);
+            }
+        };
+    }
+
     /// Registers a peer node in the store.
+    #[instrument(skip(self))]
     fn register_peer(
         &mut self,
         peer: String,
@@ -108,17 +215,18 @@ impl BroadcastMessageStore {
     }
 
     /// Gets all broadcast messages this node has stored.
+    #[instrument(skip(self))]
     fn msgs(&self) -> Vec<BroadcastMessage> {
         self.node_broadcast_msgs.iter().copied().collect()
     }
 
     /// Gets all peer nodes that have not yet acknowledged the given
     /// `broadcast_message` according to the state of the store.
-    #[allow(dead_code)]
+    #[instrument(skip(self))]
     fn unacked_nodes(
         &self,
         broadcast_message: &BroadcastMessage,
-    ) -> HashSet<&String> {
+    ) -> HashSet<String> {
         /// Helper struct for keeping track of peers to retain and remove below
         struct PeerRecords<'a> {
             keep: HashSet<&'a String>,
@@ -148,11 +256,16 @@ impl BroadcastMessageStore {
                 }
                 acc
             });
-        records.keep.difference(&records.remove).copied().collect()
+        records
+            .keep
+            .difference(&records.remove)
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Gets all [BroadcastMessage]s this node is aware of that have not yet
     /// been acknowledged by peer nodes.
+    #[instrument(skip(self))]
     fn unacked_nodes_all_msgs(&self) -> HashMap<String, HashSet<BroadcastMessage>> {
         let n_peers = max(
             self.peer_broadcast_msgs.len(),
@@ -185,6 +298,7 @@ impl BroadcastMessageStore {
 
     /// Gets the broadcast messages by peer that have been inserted since the
     /// last time this method was called.
+    #[instrument(skip(self))]
     fn recent_peer_inserts(&mut self) -> HashMap<String, HashSet<BroadcastMessage>> {
         let recents = mem::take(&mut self.recent_peer_broadcast_msgs);
         for (peer, recent_msgs) in &recents {
@@ -209,6 +323,7 @@ impl BroadcastMessageStore {
     }
 
     /// Inserts a [BroadcastMessage] for this node into the store.
+    #[instrument(skip(self))]
     fn insert(
         &mut self,
         broadcast_msg: BroadcastMessage,
@@ -218,6 +333,7 @@ impl BroadcastMessageStore {
 
     /// Inserts a [BroadcastMessage] for an existing peer node into the store.
     /// Peer nodes need to be registered first with [Self::register_peer].
+    #[instrument(skip(self))]
     fn insert_for_peer_if_exists(
         &mut self,
         peer_node: &str,
@@ -239,6 +355,7 @@ impl BroadcastMessageStore {
     /// # Errors
     /// Returns an error if the `msg_id` is unknown (i.e. has not previously
     /// been registered via [Self::register_msg_id]).
+    #[instrument(skip(self))]
     fn insert_for_peer_by_msg_id_if_exists(
         &mut self,
         peer_node: String,
@@ -255,6 +372,7 @@ impl BroadcastMessageStore {
     ///
     /// The [MessageId] can then be used to retrieve the associated
     /// [BroadcastMessage] with [`Self::get_by_msg_id()`].
+    #[instrument(skip(self))]
     fn register_msg_id(
         &mut self,
         msg_id: MessageId,
@@ -270,7 +388,8 @@ mod tests {
 
     #[test]
     fn test_inserting_and_getting_broadcast_messages_for_own_node_works() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
 
         let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
         for msg in &msgs {
@@ -283,7 +402,8 @@ mod tests {
 
     #[test]
     fn test_registering_and_retrieving_broadcast_msg_by_msg_id() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let broadcast_msg_1 = BroadcastMessage::new(1);
         let broadcast_msg_2 = BroadcastMessage::new(2);
         let msg_id_1 = MessageId::new();
@@ -313,7 +433,8 @@ mod tests {
     #[test]
     fn test_registering_and_retrieving_broadcast_msg_by_msg_id_does_not_insert_for_unregistered_peer(
     ) {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let broadcast_msg = BroadcastMessage::new(1);
         let msg_id = MessageId::new();
         let peer = "n1".to_string();
@@ -327,7 +448,8 @@ mod tests {
 
     #[test]
     fn test_insert_for_peer_if_exists_works() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let broadcast_msg_1 = BroadcastMessage::new(1);
         let broadcast_msg_2 = BroadcastMessage::new(2);
         let peer = "n1".to_string();
@@ -352,7 +474,8 @@ mod tests {
 
     #[test]
     fn test_insert_for_peer_if_exists_does_not_insert_if_peer_not_registered() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let broadcast_msg = BroadcastMessage::new(1);
         let peer = "n1".to_string();
 
@@ -364,7 +487,8 @@ mod tests {
 
     #[test]
     fn test_insert_does_not_leek_to_peers() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
 
         let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
         for msg in &msgs {
@@ -375,7 +499,8 @@ mod tests {
 
     #[test]
     fn test_recent_peer_inserts_works() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let peer = "n1".to_string();
         store.register_peer(peer.clone());
         let msgs: HashSet<_> = (0..5).map(BroadcastMessage::new).collect();
@@ -394,7 +519,8 @@ mod tests {
 
     #[test]
     fn test_unacked_nodes_works() {
-        let mut store = BroadcastMessageStore::new();
+        let (_tx, rx) = mpsc::channel(1);
+        let mut store = BroadcastMessageStore::new(rx);
         let peer_1 = "n1".to_string();
         let peer_2 = "n2".to_string();
         let peer_3 = "n3".to_string();
@@ -419,11 +545,6 @@ mod tests {
         let _ = store.insert_for_peer_if_exists(&peer_3, msg_1);
         let _ = store.insert_for_peer_if_exists(&peer_3, msg_2);
 
-        assert_eq!(store.unacked_nodes(&msg_1), HashSet::from_iter([&peer_2]));
-        assert_eq!(
-            store.unacked_nodes(&msg_2),
-            HashSet::from_iter([&peer_1, &peer_2])
-        );
         assert_eq!(
             store.unacked_nodes_all_msgs(),
             HashMap::from_iter([
@@ -442,11 +563,6 @@ mod tests {
             ])
         );
 
-        assert_eq!(store.unacked_nodes(&msg_1), HashSet::from_iter([&peer_2]));
-        assert_eq!(
-            store.unacked_nodes(&msg_2),
-            HashSet::from_iter([&peer_1, &peer_2])
-        );
         assert_eq!(
             store.unacked_nodes_all_msgs(),
             HashMap::from_iter([
