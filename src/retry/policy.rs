@@ -9,7 +9,7 @@ pub(crate) enum RetryDecision {
     DoNotRetry,
 }
 
-pub(crate) trait RetryPolicy {
+pub trait RetryPolicy {
     /// Decides if and when a retry should be made.
     fn should_retry(
         &self,
@@ -19,14 +19,14 @@ pub(crate) trait RetryPolicy {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub(crate) struct ExponentialBackOff {
+pub struct ExponentialBackOff {
     max_retry_attempts: u32,
     base_interval_ms: f32,
     exponential_rate: f32,
 }
 
 impl ExponentialBackOff {
-    pub(crate) fn new(max_retry_attempts: u32) -> Self {
+    pub fn new(max_retry_attempts: u32) -> Self {
         Self {
             max_retry_attempts,
             base_interval_ms: 5.0,

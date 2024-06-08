@@ -10,7 +10,7 @@ use crate::retry::policy::RetryPolicy;
 use crate::retry::RetryMessage;
 
 /// A datastructure to organise messages for retry
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct RetryStore<P> {
     retry_queue: BTreeMap<DateTime<Utc>, Vec<RetryMessage>>,
     broadcast_messages: HashMap<Message, RetryDecision>,

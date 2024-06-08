@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
@@ -9,7 +10,8 @@ pub(crate) mod gossip;
 pub(crate) mod node_selector;
 
 /// Broadcast messages to other nodes in the network.
-pub(crate) trait Broadcast: Send + Sync + Clone {
+#[async_trait]
+pub(crate) trait Broadcast: Send + Clone {
     /// Get this node's broadcast messages
     async fn messages(&self) -> Result<Vec<BroadcastMessage>>;
 

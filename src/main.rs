@@ -1,6 +1,7 @@
-use anyhow::Result;
-use node::Node;
 use tracing::metadata::LevelFilter;
+
+use crate::node::NodeBuilder;
+use crate::retry::ExponentialBackOff;
 
 mod broadcast;
 mod dispatch;
@@ -14,21 +15,33 @@ mod retry;
 mod topology;
 mod transport;
 
-// struct ConstLayer;
-//
-// impl<S> Layer<S> for ConstLayer
-//     where
-//         S: Subscriber + for<'span> LookupSpan<'span>,
-// {
-//     fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, ctx:
-// Context<'_, S>) {         if let Some(span) = ctx.span(id) {
-//             span.extensions_mut().insert(NODE_ID.get().map(|s|
-// s.as_str()).unwrap_or_else(|| "uninitialised"))         }
-//     }
-// }
+use clap::Parser;
+use clap::Subcommand;
+
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Retry {
+        #[arg(default_value_t = 5)]
+        retries: u32,
+    },
+    Gossip {
+        #[arg(default_value_t = 4)]
+        fanout: usize,
+        #[arg(default_value_t = 5)]
+        max_rounds: usize,
+    },
+}
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let file_appender =
         tracing_appender::rolling::hourly("/Users/alexjesipow/coding/gossip/logs", "test.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -36,6 +49,24 @@ async fn main() -> Result<()> {
         .with_max_level(LevelFilter::DEBUG)
         .with_writer(non_blocking)
         .init();
-    let mut node = Node::new().await;
-    node.run().await
+    let cli = Cli::parse();
+    match cli.command {
+        Commands::Retry { retries } => {
+            let mut node = NodeBuilder::default()
+                .retry()
+                .policy(ExponentialBackOff::new(retries))
+                .build()
+                .await;
+            node.run().await.expect("node not fail");
+        }
+        Commands::Gossip { fanout, max_rounds } => {
+            let mut node = NodeBuilder::default()
+                .gossip()
+                .fanout(fanout)
+                .max_broadcast_rounds(max_rounds)
+                .build()
+                .await;
+            node.run().await.expect("node not fail");
+        }
+    };
 }

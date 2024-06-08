@@ -4,19 +4,26 @@ mod store;
 use std::iter;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use itertools::Itertools;
+pub use policy::ExponentialBackOff;
+pub use policy::RetryPolicy;
 use tokio::time::interval;
 use tracing::debug;
 use tracing::error;
 
+use crate::broadcast::Broadcast;
 use crate::dispatch::MessageDispatchHandle;
 use crate::message_store::BroadcastMessageStoreHandle;
+use crate::primitives::BroadcastMessage;
+use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
+use crate::primitives::NodeId;
 use crate::protocol::Message;
-use crate::retry::policy::ExponentialBackOff;
 use crate::retry::store::RetryStore;
+use crate::topology::Topology;
 
 /// A message that should be retried
 #[derive(Debug, Clone)]
@@ -29,42 +36,92 @@ pub(crate) struct RetryMessage {
 }
 
 /// Handles message retries
-#[derive(Debug)]
-pub(crate) struct RetryHandler {
-    msg_dispatch: MessageDispatchHandle,
-    broadcast_message_store: BroadcastMessageStoreHandle,
-    retry_store: RetryStore<ExponentialBackOff>,
+#[derive(Debug, Clone)]
+pub(crate) struct RetryHandle {
+    message_store: BroadcastMessageStoreHandle,
 }
 
-impl RetryHandler {
-    pub(crate) fn new(
+impl RetryHandle {
+    pub(crate) fn new<P: RetryPolicy + Send + 'static>(
         msg_dispatch: MessageDispatchHandle,
-        broadcast_message_store: BroadcastMessageStoreHandle,
+        message_store: BroadcastMessageStoreHandle,
+        policy: P,
     ) -> Self {
-        Self {
-            msg_dispatch,
-            broadcast_message_store,
-            retry_store: RetryStore::new(ExponentialBackOff::default()),
+        // TODO handle shutdown
+        let message_store_clone = message_store.clone();
+        tokio::spawn(async {
+            let retry_store = RetryStore::new(policy);
+            let mut broadcast = RetryBroadcast {
+                msg_dispatch,
+                message_store: message_store_clone,
+                retry_store,
+            };
+            broadcast.run().await
+        });
+
+        Self { message_store }
+    }
+}
+
+#[async_trait]
+impl Broadcast for RetryHandle {
+    async fn messages(&self) -> anyhow::Result<Vec<BroadcastMessage>> {
+        self.message_store.msgs().await
+    }
+
+    async fn update_topology(
+        &self,
+        topology: Topology,
+    ) {
+        let neighbours = topology.overlay_neighbours().unwrap_or_default();
+
+        if !neighbours.is_empty() {
+            for neighbour in neighbours {
+                self.message_store
+                    .register_peer(neighbour.to_string())
+                    .await;
+            }
         }
     }
 
+    async fn ack_by_msg_id(
+        &self,
+        node: NodeId,
+        msg_id: MessageId,
+    ) {
+        // Remember that the recipient received the broadcast message so that we do not
+        // send it again.
+        self.message_store
+            .insert_for_peer_by_msg_id_if_exists(node.to_string(), msg_id)
+            .await;
+    }
+
+    async fn broadcast(
+        &self,
+        msg: BroadcastMessage,
+    ) {
+        self.message_store.insert(msg).await;
+    }
+}
+
+struct RetryBroadcast<P> {
+    msg_dispatch: MessageDispatchHandle,
+    message_store: BroadcastMessageStoreHandle,
+    retry_store: RetryStore<P>,
+}
+
+impl<P: RetryPolicy> RetryBroadcast<P> {
     pub(crate) async fn run(&mut self) {
-        debug!("Running retry handler");
+        debug!("Running retry broadcast");
         let mut interval = interval(Duration::from_millis(1));
         loop {
             interval.tick().await;
             // Send the same broadcast message to other nodes that we think have not seen it
             // yet.
-            let unacked_broadcast_messages_by_nodes = self
-                .broadcast_message_store
-                .unacked_nodes_all_msgs()
-                .await
-                .unwrap();
-            let recently_acked_msgs_by_nodes = self
-                .broadcast_message_store
-                .recent_peer_inserts()
-                .await
-                .unwrap();
+            let unacked_broadcast_messages_by_nodes =
+                self.message_store.unacked_nodes_all_msgs().await.unwrap();
+            let recently_acked_msgs_by_nodes =
+                self.message_store.recent_peer_inserts().await.unwrap();
 
             let new_unacked_broadcast_messages: Vec<_> = unacked_broadcast_messages_by_nodes
                 .into_iter()

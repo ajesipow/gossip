@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use tokio::time::interval;
 use tracing::error;
 use tracing::instrument;
@@ -141,6 +142,7 @@ async fn run_gossip(mut gossip: Gossip) {
     }
 }
 
+#[async_trait]
 impl Broadcast for GossipHandle {
     #[instrument(skip(self))]
     async fn messages(&self) -> Result<Vec<BroadcastMessage>> {

@@ -222,46 +222,31 @@ impl BroadcastMessageStore {
 
     /// Gets all peer nodes that have not yet acknowledged the given
     /// `broadcast_message` according to the state of the store.
-    #[instrument(skip(self))]
-    fn unacked_nodes(
-        &self,
-        broadcast_message: &BroadcastMessage,
-    ) -> HashSet<String> {
-        /// Helper struct for keeping track of peers to retain and remove below
-        struct PeerRecords<'a> {
-            keep: HashSet<&'a String>,
-            remove: HashSet<&'a String>,
-        }
-
-        impl<'a> PeerRecords<'a> {
-            fn new() -> Self {
-                Self {
-                    keep: HashSet::new(),
-                    remove: HashSet::new(),
-                }
-            }
-        }
-
-        let records = self
-            .peer_broadcast_msgs
-            .iter()
-            .chain(self.recent_peer_broadcast_msgs.iter())
-            .fold(PeerRecords::new(), |mut acc, (peer, msgs)| {
-                if !msgs.contains(broadcast_message) {
-                    acc.keep.insert(peer);
-                } else {
-                    // Since we chain the two hashmaps we don't want to count the peer if the msg is
-                    // contained in just one of the two maps.
-                    acc.remove.insert(peer);
-                }
-                acc
-            });
-        records
-            .keep
-            .difference(&records.remove)
-            .map(|s| s.to_string())
-            .collect()
-    }
+    // #[instrument(skip(self))]
+    // fn unacked_nodes(
+    //     &self,
+    //     broadcast_message: &BroadcastMessage,
+    // ) -> HashSet<String> {
+    //     let records = self
+    //         .peer_broadcast_msgs
+    //         .iter()
+    //         .chain(self.recent_peer_broadcast_msgs.iter())
+    //         .fold(PeerRecords::new(), |mut acc, (peer, msgs)| {
+    //             if !msgs.contains(broadcast_message) {
+    //                 acc.keep.insert(peer);
+    //             } else {
+    //                 // Since we chain the two hashmaps we don't want to count the peer if the msg
+    // is                 // contained in just one of the two maps.
+    //                 acc.remove.insert(peer);
+    //             }
+    //             acc
+    //         });
+    //     records
+    //         .keep
+    //         .difference(&records.remove)
+    //         .map(|s| s.to_string())
+    //         .collect()
+    // }
 
     /// Gets all [BroadcastMessage]s this node is aware of that have not yet
     /// been acknowledged by peer nodes.
@@ -381,6 +366,21 @@ impl BroadcastMessageStore {
         self.broadcast_msg_by_msg_id.insert(msg_id, broadcast_msg);
     }
 }
+
+// /// Helper struct for keeping track of peers to retain and remove below
+// struct PeerRecords<'a> {
+//     keep: HashSet<&'a String>,
+//     remove: HashSet<&'a String>,
+// }
+//
+// impl<'a> PeerRecords<'a> {
+//     fn new() -> Self {
+//         Self {
+//             keep: HashSet::new(),
+//             remove: HashSet::new(),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
