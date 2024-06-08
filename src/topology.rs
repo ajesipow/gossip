@@ -9,6 +9,8 @@ use tracing::error;
 use tracing::instrument;
 use tracing::warn;
 
+use crate::errors::Error;
+use crate::errors::TopologyError;
 use crate::primitives::NodeId;
 
 /// The overlay network topology.
@@ -28,14 +30,13 @@ impl Topology {
             .collect()
     }
 
-    #[allow(dead_code)]
     /// Provides the current node's direct neighbours in the established overlay
     /// network.
-    pub(crate) fn overlay_neighbours(&self) -> Vec<NodeId> {
+    pub(crate) fn overlay_neighbours(&self) -> Result<Vec<NodeId>, Error> {
         self.raw_topology
             .get(&self.current_node)
             .cloned()
-            .unwrap_or_default()
+            .ok_or_else(|| TopologyError::NodeNotFound(self.current_node.clone()).into())
     }
 }
 
@@ -68,15 +69,11 @@ impl TopologyStoreHandle {
     pub(crate) async fn update(
         &self,
         topology: Topology,
-    ) {
-        if self
-            .sender
+    ) -> Result<(), Error> {
+        self.sender
             .send(TopologyStoreMessage::Update { topology })
             .await
-            .is_err()
-        {
-            error!("updating topology failed!");
-        }
+            .map_err(|e| TopologyError::Update(e.to_string()).into())
     }
 
     #[instrument(skip(self))]

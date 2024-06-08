@@ -1,5 +1,6 @@
 use anyhow::Result;
 use once_cell::sync::OnceCell;
+use tokio::io;
 use tracing::info;
 
 use crate::broadcast::gossip::Fanout;
@@ -47,7 +48,7 @@ impl Node {
 
         // FIXME AJES: shutdown gracefully
 
-        let message_dispatch_handle = MessageDispatchHandle::new();
+        let message_dispatch_handle = MessageDispatchHandle::new(io::stdout());
         let broadcast_message_store = BroadcastMessageStoreHandle::new();
         let topology_store_handle = TopologyStoreHandle::new();
         let gossip_broadcast = GossipHandle::new(

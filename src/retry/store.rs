@@ -137,6 +137,7 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
+    use crate::node::NODE_ID;
     use crate::primitives::BroadcastMessage;
     use crate::primitives::MessageRecipient;
     use crate::protocol::Message;
@@ -144,6 +145,8 @@ mod tests {
 
     #[test]
     fn adding_messages_works() {
+        NODE_ID.set("n1".to_string()).unwrap();
+
         let mut store = RetryStore::new(ExponentialBackOff::default());
 
         let msg_1 = Message::broadcast(

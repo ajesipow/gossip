@@ -4,6 +4,7 @@ use tracing::metadata::LevelFilter;
 
 mod broadcast;
 mod dispatch;
+mod errors;
 mod message_handling;
 mod message_store;
 mod node;
@@ -12,7 +13,6 @@ mod protocol;
 mod retry;
 mod topology;
 mod transport;
-mod errors;
 
 // struct ConstLayer;
 //

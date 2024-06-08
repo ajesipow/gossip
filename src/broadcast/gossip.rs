@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use tokio::time::interval;
-use tracing::debug;
 use tracing::error;
 use tracing::instrument;
 
@@ -153,10 +152,9 @@ impl Broadcast for GossipHandle {
         &self,
         topology: Topology,
     ) {
-        let neighbours = topology.overlay_neighbours();
-        debug!("about to update topology");
-        self.topology_store.update(topology).await;
-        debug!("done updating topology");
+        let neighbours = topology.overlay_neighbours().unwrap_or_default();
+        // TODO error handling
+        self.topology_store.update(topology).await.unwrap();
 
         if !neighbours.is_empty() {
             for neighbour in neighbours {
@@ -202,10 +200,12 @@ impl Fanout {
 // mod tests {
 //     use std::collections::BTreeMap;
 //     use std::collections::HashMap;
+//     use std::sync::{Arc, Mutex};
+//     use tokio::io::BufWriter;
 //
 //     use super::*;
-//     use crate::protocol::MessageBody;
 //     use crate::topology::Topology;
+//
 //
 //     #[tokio::test]
 //     async fn test_basic_broadcast_works() {
@@ -222,28 +222,31 @@ impl Fanout {
 //         let msg = BroadcastMessage::new(1);
 //
 //         let msg_store = BroadcastMessageStoreHandle::new();
-//         let dispatch = MessageDispatchHandle::new();
-//         let mut gossip = GossipHandle::new(msg_store, Fanout::new(2), 2,
-// dispatch);
+//         let buf = Arc::new(Mutex::new(BufWriter::new(vec![])));
+//         let dispatch = MessageDispatchHandle::new(&mut buf);
+//         let topology_store_handle = TopologyStoreHandle::new();
+//         let mut gossip = GossipHandle::new(msg_store, topology_store_handle,
+// Fanout::new(2), 2,                                            dispatch);
 //
 //         gossip.update_topology(topology).await;
 //         gossip.broadcast(msg).await;
 //
 //         // Just one because we send multiple messages as a vec at once
-//         assert_eq!(rx.len(), 1);
-//
-//         let mut results = HashMap::new();
-//         let res = rx.recv().await.unwrap();
-//         for pre_msg in res {
-//             if let MessageBody::Broadcast(body) = pre_msg.body {
-//                 results.insert(pre_msg.dest.as_ref().to_string(),
-// body.message);             } else {
-//                 continue;
-//             }
-//         }
-//
-//         assert_eq!(results.len(), 2);
-//         assert_eq!(results.remove("n2"), Some(msg));
-//         assert_eq!(results.remove("n3"), Some(msg));
+//         // assert_eq!(rx.len(), 1);
+//         //
+//         // let mut results = HashMap::new();
+//         // let res = rx.recv().await.unwrap();
+//         // for pre_msg in res {
+//         //     if let MessageBody::Broadcast(body) = pre_msg.body {
+//         //         results.insert(pre_msg.dest.as_ref().to_string(),
+//         //                        body.message);
+//         //     } else {
+//         //         continue;
+//         //     }
+//         // }
+//         //
+//         // assert_eq!(results.len(), 2);
+//         // assert_eq!(results.remove("n2"), Some(msg));
+//         // assert_eq!(results.remove("n3"), Some(msg));
 //     }
 // }
