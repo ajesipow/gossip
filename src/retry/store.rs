@@ -137,26 +137,35 @@ mod tests {
     use itertools::Itertools;
 
     use super::*;
-    use crate::node::NODE_ID;
     use crate::primitives::BroadcastMessage;
+    use crate::primitives::MessageId;
     use crate::primitives::MessageRecipient;
+    use crate::protocol::BroadcastBody;
     use crate::protocol::Message;
+    use crate::protocol::MessageBody;
     use crate::retry::policy::ExponentialBackOff;
 
     #[test]
     fn adding_messages_works() {
-        NODE_ID.set("n1".into()).unwrap();
-
+        let node = "n0".to_string();
         let mut store = RetryStore::new(ExponentialBackOff::default());
 
-        let msg_1 = Message::broadcast(
-            MessageRecipient::new("n1".to_string()),
-            BroadcastMessage::new(1),
-        );
-        let msg_2 = Message::broadcast(
-            MessageRecipient::new("n2".to_string()),
-            BroadcastMessage::new(2),
-        );
+        let msg_1 = Message {
+            src: node.clone(),
+            dest: MessageRecipient::new("n1".to_string()),
+            body: MessageBody::Broadcast(BroadcastBody {
+                message: BroadcastMessage::new(1),
+                msg_id: MessageId::new(),
+            }),
+        };
+        let msg_2 = Message {
+            src: node.clone(),
+            dest: MessageRecipient::new("n2".to_string()),
+            body: MessageBody::Broadcast(BroadcastBody {
+                message: BroadcastMessage::new(2),
+                msg_id: MessageId::new(),
+            }),
+        };
 
         store.add(msg_1.clone());
         store.add(msg_2.clone());
