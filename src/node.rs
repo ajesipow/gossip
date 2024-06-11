@@ -9,6 +9,7 @@ use crate::broadcast::Broadcast;
 use crate::dispatch::MessageDispatchHandle;
 use crate::message_handling::handle_message;
 use crate::message_store::BroadcastMessageStoreHandle;
+use crate::primitives::NodeId;
 use crate::protocol::Message;
 use crate::protocol::MessageBody;
 use crate::retry::ExponentialBackOff;
@@ -17,8 +18,7 @@ use crate::retry::RetryPolicy;
 use crate::topology::TopologyStoreHandle;
 use crate::transport::StdInTransport;
 
-// TODO make NodeId
-pub(crate) static NODE_ID: OnceCell<String> = OnceCell::new();
+pub(crate) static NODE_ID: OnceCell<NodeId> = OnceCell::new();
 
 #[derive(Debug)]
 pub struct NodeBuilder {
@@ -31,6 +31,7 @@ impl Default for NodeBuilder {
             transport: StdInTransport::new(),
         }
     }
+    // TODO add build method or impl await
 }
 
 impl NodeBuilder {

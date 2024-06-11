@@ -7,6 +7,7 @@ use crate::node::NODE_ID;
 use crate::primitives::BroadcastMessage;
 use crate::primitives::MessageId;
 use crate::primitives::MessageRecipient;
+use crate::primitives::NodeId;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct Message {
@@ -198,7 +199,7 @@ pub(crate) struct EchoOkBody {
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
 pub(crate) struct InitBody {
     pub msg_id: MessageId,
-    pub node_id: String,
+    pub node_id: NodeId,
     pub node_ids: Vec<String>,
 }
 

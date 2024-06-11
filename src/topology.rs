@@ -40,10 +40,10 @@ impl Topology {
     }
 }
 
-impl From<(BTreeMap<String, Vec<String>>, String)> for Topology {
-    fn from((value, node_id): (BTreeMap<String, Vec<String>>, String)) -> Self {
+impl From<(BTreeMap<String, Vec<String>>, NodeId)> for Topology {
+    fn from((value, node_id): (BTreeMap<String, Vec<String>>, NodeId)) -> Self {
         Self {
-            current_node: node_id.into(),
+            current_node: node_id,
             raw_topology: value
                 .into_iter()
                 .map(|(k, v)| (k.into(), v.into_iter().map_into().collect()))

@@ -198,57 +198,76 @@ impl Fanout {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::collections::BTreeMap;
-//     use std::collections::HashMap;
-//     use std::sync::{Arc, Mutex};
-//     use tokio::io::BufWriter;
-//
-//     use super::*;
-//     use crate::topology::Topology;
-//
-//
-//     #[tokio::test]
-//     async fn test_basic_broadcast_works() {
-//         let topology: Topology = (
-//             BTreeMap::from_iter([
-//                 ("n1".to_string(), vec!["n2".to_string(), "n3".to_string()]),
-//                 ("n2".to_string(), vec!["n1".to_string()]),
-//                 ("n3".to_string(), vec!["n1".to_string()]),
-//             ]),
-//             "n1".to_string(),
-//         )
-//             .into();
-//
-//         let msg = BroadcastMessage::new(1);
-//
-//         let msg_store = BroadcastMessageStoreHandle::new();
-//         let buf = Arc::new(Mutex::new(BufWriter::new(vec![])));
-//         let dispatch = MessageDispatchHandle::new(&mut buf);
-//         let topology_store_handle = TopologyStoreHandle::new();
-//         let mut gossip = GossipHandle::new(msg_store, topology_store_handle,
-// Fanout::new(2), 2,                                            dispatch);
-//
-//         gossip.update_topology(topology).await;
-//         gossip.broadcast(msg).await;
-//
-//         // Just one because we send multiple messages as a vec at once
-//         // assert_eq!(rx.len(), 1);
-//         //
-//         // let mut results = HashMap::new();
-//         // let res = rx.recv().await.unwrap();
-//         // for pre_msg in res {
-//         //     if let MessageBody::Broadcast(body) = pre_msg.body {
-//         //         results.insert(pre_msg.dest.as_ref().to_string(),
-//         //                        body.message);
-//         //     } else {
-//         //         continue;
-//         //     }
-//         // }
-//         //
-//         // assert_eq!(results.len(), 2);
-//         // assert_eq!(results.remove("n2"), Some(msg));
-//         // assert_eq!(results.remove("n3"), Some(msg));
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use bytes::BytesMut;
+    use tokio::io::AsyncReadExt;
+
+    use super::*;
+    use crate::node::NODE_ID;
+    use crate::protocol::MessageBody;
+    use crate::topology::Topology;
+
+    #[tokio::test]
+    async fn test_basic_broadcast_works() {
+        let this_node_id = NodeId::from("n1");
+        NODE_ID.set(this_node_id.clone()).unwrap();
+        let topology: Topology = (
+            BTreeMap::from_iter([
+                ("n1".to_string(), vec!["n2".to_string(), "n3".to_string()]),
+                ("n2".to_string(), vec!["n1".to_string()]),
+                ("n3".to_string(), vec!["n1".to_string()]),
+            ]),
+            this_node_id,
+        )
+            .into();
+
+        let msg = BroadcastMessage::new(1);
+
+        let msg_store = BroadcastMessageStoreHandle::new();
+        let (mut client, server) = tokio::io::duplex(1024);
+        let dispatch = MessageDispatchHandle::new(server);
+        let topology_store_handle = TopologyStoreHandle::new();
+        let gossip = GossipHandle::new(
+            msg_store,
+            topology_store_handle,
+            Fanout::new(2),
+            2,
+            dispatch,
+        );
+
+        gossip.update_topology(topology).await;
+        gossip.broadcast(msg).await;
+
+        let mut buf = BytesMut::with_capacity(1024);
+        client.read_buf(&mut buf).await.unwrap();
+        let raw_message_str = String::from_utf8_lossy(&buf);
+        let raw_messages = raw_message_str.split('\n');
+        let messages: Vec<Message> = raw_messages
+            .into_iter()
+            .filter_map(|raw_msg| {
+                if raw_msg.is_empty() {
+                    // A trailing `\n` leads to an empty string
+                    None
+                } else {
+                    serde_json::from_str(raw_msg).ok()
+                }
+            })
+            .collect();
+
+        let mut results = HashMap::new();
+        for pre_msg in messages {
+            if let MessageBody::Broadcast(body) = pre_msg.body {
+                results.insert(pre_msg.dest.as_ref().to_string(), body.message);
+            } else {
+                continue;
+            }
+        }
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results.remove("n2"), Some(msg));
+        assert_eq!(results.remove("n3"), Some(msg));
+    }
+}

@@ -71,7 +71,7 @@ async fn run_dispatch<W: AsyncWrite + Unpin>(mut dispatch: MessageDispatch<W>) {
 }
 
 #[instrument(skip_all, fields(
-    node = % NODE_ID.get().map(| s | s.as_str()).unwrap_or_else(|| "uninitialised")
+    node = % NODE_ID.get().map(| s | s.as_ref()).unwrap_or_else(|| "uninitialised")
 ))]
 async fn serialize_and_send<S, W>(
     msg: S,

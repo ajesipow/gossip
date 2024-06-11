@@ -43,19 +43,17 @@ mod tests {
 
     #[test]
     fn test_sampling_contains_only_unique_nodes_and_not_self() {
-        let this_node = "n1".to_string();
+        let this_node_id = NodeId::from("n1");
         let topology: Topology = (
             BTreeMap::from_iter([
                 ("n1".to_string(), vec!["n2".to_string(), "n3".to_string()]),
                 ("n2".to_string(), vec!["n1".to_string()]),
                 ("n3".to_string(), vec!["n1".to_string()]),
             ]),
-            this_node.clone(),
+            this_node_id.clone(),
         )
             .into();
         let selector = NodeSelector::new(topology);
-
-        let this_node_id = NodeId::from(this_node);
 
         // Ensure no flakiness
         for _ in 0..10 {

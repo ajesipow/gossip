@@ -28,6 +28,18 @@ impl From<String> for NodeId {
     }
 }
 
+impl From<&str> for NodeId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+impl AsRef<str> for NodeId {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 impl From<NodeId> for MessageRecipient {
     fn from(value: NodeId) -> Self {
         Self(value.0)

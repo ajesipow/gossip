@@ -11,7 +11,7 @@ use crate::topology::Topology;
 
 /// Handle incoming messages and return an appropriate response.
 #[instrument(skip_all, fields(
-    node = % NODE_ID.get().map(| s | s.as_str()).unwrap_or_else(|| "uninitialised")
+    node = % NODE_ID.get().map(| s | s.as_ref()).unwrap_or_else(|| "uninitialised")
 ))]
 pub(crate) async fn handle_message<B>(
     message: Message,

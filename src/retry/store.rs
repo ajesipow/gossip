@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn adding_messages_works() {
-        NODE_ID.set("n1".to_string()).unwrap();
+        NODE_ID.set("n1".into()).unwrap();
 
         let mut store = RetryStore::new(ExponentialBackOff::default());
 

@@ -22,3 +22,6 @@ rand = "0.8"
 thiserror = "1.0"
 async-trait = "0.1.80"
 clap = { version = "4.5.6", features = ["derive"] }
+
+[dev-dependencies]
+bytes = "1.6.0"
